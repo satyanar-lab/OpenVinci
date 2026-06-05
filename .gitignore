@@ -24,3 +24,4 @@ dist/
 .openvinci/
 backend/.openvinci-pid
 frontend/.openvinci-pid
+build/
