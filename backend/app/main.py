@@ -8,11 +8,19 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from app.model import SUPPORTED_CLASSES, UnknownConfigClassError, dump, load
-from engine import load_project, validate
+from engine import (
+    Project,
+    Fix,
+    apply_fix,
+    load_project,
+    project_from_raw,
+    validate,
+)
 from gen import generate_and_compile
 from importer import import_dbc_file
 
@@ -21,8 +29,7 @@ DEFAULT_EXAMPLES = REPO_ROOT / "examples"
 SCHEMAS_DIR = REPO_ROOT / "model"
 
 # class -> on-disk path inside a project. Matches what vendor/as expects
-# (docs/AUTOAS_NOTES.md §1.1). Hardcoded for now; Layer 2 will discover
-# this from the project tree.
+# (docs/AUTOAS_NOTES.md §1.1).
 CONFIG_LAYOUT: dict[str, str] = {
     "Can": "config/Can/Can.json",
     "Com": "config/Com/Com.json",
@@ -49,6 +56,51 @@ def _schemas_dir() -> Path:
     return Path(os.environ.get("OPENVINCI_SCHEMAS_DIR", SCHEMAS_DIR))
 
 
+def _project_to_raw(project: Project) -> dict[str, dict[str, Any]]:
+    return project.raw
+
+
+def _issues_to_json(report) -> list[dict[str, Any]]:
+    return [
+        {
+            "rule": i.rule,
+            "severity": i.severity.value,
+            "message": i.message,
+            "module": i.location.module,
+            "path": list(i.location.path),
+            "fix": (
+                {"description": i.fix.description, "patches": i.fix.patches}
+                if i.fix
+                else None
+            ),
+        }
+        for i in report.issues
+    ]
+
+
+def _project_from_request(raw: dict[str, dict[str, Any]] | None) -> Project:
+    try:
+        return project_from_raw(raw or {})
+    except UnknownConfigClassError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid project: {e}")
+
+
+class ProjectRequest(BaseModel):
+    project: dict[str, dict[str, Any]]
+
+
+class ApplyFixRequest(BaseModel):
+    project: dict[str, dict[str, Any]]
+    fix: dict[str, Any]
+
+
+class GenerateRequest(BaseModel):
+    project: dict[str, dict[str, Any]] | None = None
+    sourceProject: str | None = None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="OpenVinci backend", version="0.1.0")
 
@@ -62,6 +114,56 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # --- schemas -----------------------------------------------------
+
+    @app.get("/schemas")
+    def list_schemas() -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for cls, filename in SCHEMA_FILES.items():
+            path = _schemas_dir() / filename
+            if not path.is_file():
+                raise HTTPException(status_code=500, detail=f"schema missing: {path}")
+            out[cls] = json.loads(path.read_text())
+        assert set(SCHEMA_FILES) == set(SUPPORTED_CLASSES), (
+            "schema dispatch and model dispatch are out of sync"
+        )
+        return out
+
+    @app.get("/schemas/{cls}")
+    def get_schema(cls: str) -> dict[str, Any]:
+        if cls not in SCHEMA_FILES:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown class {cls!r}; known: {sorted(SCHEMA_FILES)}",
+            )
+        return json.loads((_schemas_dir() / SCHEMA_FILES[cls]).read_text())
+
+    # --- projects (file-backed examples) -----------------------------
+
+    @app.get("/api/projects")
+    def list_projects() -> dict[str, Any]:
+        root = _examples_dir()
+        projects: list[str] = []
+        if root.is_dir():
+            for entry in sorted(root.iterdir()):
+                # an OpenVinci project = a dir with at least one recognised module JSON
+                if entry.is_dir() and any(
+                    (entry / rel).is_file() for rel in CONFIG_LAYOUT.values()
+                ):
+                    projects.append(entry.name)
+        return {"projects": projects}
+
+    @app.get("/api/projects/{name}")
+    def get_project(name: str) -> dict[str, Any]:
+        project_dir = _examples_dir() / name
+        if not project_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"project not found: {name}")
+        try:
+            project = load_project(project_dir)
+        except UnknownConfigClassError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"name": name, "project": _project_to_raw(project)}
 
     @app.get("/api/config")
     def get_config(
@@ -80,9 +182,6 @@ def create_app() -> FastAPI:
             data = json.loads(path.read_text())
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=500, detail=f"invalid JSON in {path}: {e}")
-        # Round-trip the dict through the model layer so the API serves
-        # only validated, typed data. Unknown extras still pass through
-        # via extra="allow" (see app/model/common.py).
         try:
             model = load(data)
         except UnknownConfigClassError as e:
@@ -94,62 +193,57 @@ def create_app() -> FastAPI:
             "data": dump(model),
         }
 
-    @app.get("/schemas")
-    def list_schemas() -> dict[str, Any]:
-        """Bundle of Layer-1 JSON Schemas, keyed by class.
+    # --- validate + apply-fix -----------------------------------------
 
-        The frontend fetches these at runtime (docs/ARCHITECTURE.md
-        §"Layer 4") rather than bundling them into the JS, so a schema
-        edit reaches the UI without a rebuild.
-        """
-        out: dict[str, Any] = {}
-        for cls, filename in SCHEMA_FILES.items():
-            path = _schemas_dir() / filename
-            if not path.is_file():
-                raise HTTPException(status_code=500, detail=f"schema missing: {path}")
-            out[cls] = json.loads(path.read_text())
-        # Sanity: backend's supported classes must match the schema set.
-        assert set(SCHEMA_FILES) == set(SUPPORTED_CLASSES), (
-            "schema dispatch and model dispatch are out of sync"
-        )
-        return out
+    @app.post("/api/validate")
+    def api_validate(body: ProjectRequest) -> dict[str, Any]:
+        project = _project_from_request(body.project)
+        report = validate(project)
+        return {
+            "ok": report.ok,
+            "errorCount": len(report.errors),
+            "warningCount": len(report.warnings),
+            "issues": _issues_to_json(report),
+        }
 
-    @app.get("/schemas/{cls}")
-    def get_schema(cls: str) -> dict[str, Any]:
-        if cls not in SCHEMA_FILES:
-            raise HTTPException(
-                status_code=404,
-                detail=f"unknown class {cls!r}; known: {sorted(SCHEMA_FILES)}",
+    @app.post("/api/apply-fix")
+    def api_apply_fix(body: ApplyFixRequest) -> dict[str, Any]:
+        project = _project_from_request(body.project)
+        try:
+            fix = Fix(
+                description=body.fix.get("description", ""),
+                patches=body.fix.get("patches", {}),
             )
-        path = _schemas_dir() / SCHEMA_FILES[cls]
-        return json.loads(path.read_text())
+            updated = apply_fix(project, fix)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        report = validate(updated)
+        return {
+            "project": _project_to_raw(updated),
+            "validation": {
+                "ok": report.ok,
+                "errorCount": len(report.errors),
+                "warningCount": len(report.warnings),
+                "issues": _issues_to_json(report),
+            },
+        }
+
+    # --- DBC import ---------------------------------------------------
 
     @app.post("/api/import/dbc")
     def api_import_dbc(
-        dbc: str = Query(
-            ..., description="Path to a .dbc file (repo-relative OK)."
-        ),
+        dbc: str = Query(..., description="Path to a .dbc file (repo-relative OK)."),
         network: str = Query("CAN0"),
         me: str = Query("AS"),
         baudrate: int = Query(500000, ge=1),
     ) -> dict[str, Any]:
-        """Parse a DBC, build a fresh project, auto-wire, return the result.
-
-        Body shape: `{source, network, me, project: {Com, CanIf, PduR, Can},
-        validation: {ok, errorCount, warningCount, issues}}`. The endpoint
-        does not persist; it's a "preview" the UI can save explicitly.
-        """
         dbc_path = Path(dbc)
         if not dbc_path.is_absolute():
             dbc_path = REPO_ROOT / dbc_path
         if not dbc_path.is_file():
             raise HTTPException(status_code=404, detail=f"dbc not found: {dbc}")
-
         project = import_dbc_file(
-            dbc_path,
-            network_name=network,
-            me=me,
-            baudrate=baudrate,
+            dbc_path, network_name=network, me=me, baudrate=baudrate
         )
         report = validate(project)
         try:
@@ -160,45 +254,69 @@ def create_app() -> FastAPI:
             "source": source,
             "network": network,
             "me": me,
-            "project": project.raw,
+            "project": _project_to_raw(project),
             "validation": {
                 "ok": report.ok,
                 "errorCount": len(report.errors),
                 "warningCount": len(report.warnings),
-                "issues": [
-                    {
-                        "rule": i.rule,
-                        "severity": i.severity.value,
-                        "message": i.message,
-                        "module": i.location.module,
-                        "path": list(i.location.path),
-                    }
-                    for i in report.issues
-                ],
+                "issues": _issues_to_json(report),
             },
         }
 
-    @app.post("/api/generate")
-    def api_generate(project: str = Query("com-minimal")) -> dict[str, Any]:
-        """Stage the project, run upstream generators, gcc-compile the result.
+    @app.get("/api/dbcs")
+    def list_dbcs() -> dict[str, Any]:
+        """Bundled DBC files the UI can offer as import sources."""
+        root = REPO_ROOT / "examples" / "dbc"
+        files: list[str] = []
+        if root.is_dir():
+            for p in sorted(root.rglob("*.dbc")):
+                files.append(str(p.relative_to(REPO_ROOT)))
+        return {"dbcs": files}
 
-        Returns `{project, files, compileResult}` per the prompt. The work
-        directory is created in tempfile space and cleaned up on response;
-        only the metadata + diagnostics survive.
+    # --- generate -----------------------------------------------------
+
+    @app.post("/api/generate")
+    def api_generate(
+        project: str | None = Query(None, description="Named project on disk"),
+        body: GenerateRequest | None = Body(None),
+    ) -> dict[str, Any]:
+        """Stage, generate, gcc-compile.
+
+        Two call shapes:
+        - `?project=NAME` — load NAME from /examples and generate (back-compat).
+        - JSON body `{project: {...}, sourceProject?: "name"}` — generate from
+          the UI's in-memory state; sourceProject lets the staging step pull
+          in ancillary files (DBC, E2E.json, …) from a known on-disk project.
         """
-        project_dir = _examples_dir() / project
-        if not project_dir.is_dir():
-            raise HTTPException(status_code=404, detail=f"project not found: {project}")
-        try:
-            proj = load_project(project_dir)
-        except UnknownConfigClassError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        if body is not None and body.project is not None:
+            proj = _project_from_request(body.project)
+            source_dir = (
+                _examples_dir() / body.sourceProject if body.sourceProject else None
+            )
+            label = body.sourceProject or "<in-memory>"
+        elif project is not None:
+            project_dir = _examples_dir() / project
+            if not project_dir.is_dir():
+                raise HTTPException(
+                    status_code=404, detail=f"project not found: {project}"
+                )
+            try:
+                proj = load_project(project_dir)
+            except UnknownConfigClassError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            source_dir = project_dir
+            label = project
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="provide ?project=<name> or a JSON body with `project`",
+            )
 
         workdir = Path(tempfile.mkdtemp(prefix="openvinci-gen-"))
         try:
-            result = generate_and_compile(proj, workdir, source_dir=project_dir)
+            result = generate_and_compile(proj, workdir, source_dir=source_dir)
             return {
-                "project": project,
+                "project": label,
                 "files": [asdict(f) for f in result.files],
                 "compileResult": asdict(result.compile_result)
                 if result.compile_result

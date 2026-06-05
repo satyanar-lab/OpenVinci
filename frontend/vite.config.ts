@@ -10,6 +10,7 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:8000",
       "/health": "http://127.0.0.1:8000",
+      "/schemas": "http://127.0.0.1:8000",
     },
   },
   test: {
@@ -17,5 +18,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/setupTests.ts"],
     css: false,
+    // each test resets jsdom — fresh DOM per test
+    isolate: true,
   },
 });
