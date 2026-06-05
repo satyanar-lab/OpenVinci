@@ -13,3 +13,9 @@ A direct copy of four configs from `vendor/as/app/app/config/`:
 is included here. The configs still parse as JSON (which is all the
 stub `/api/config` endpoint needs); generating C from them requires the
 full surrounding project tree under `vendor/as/`.
+
+`Can/Can.json` is **OpenVinci-only** — `vendor/as` has no `class: "Can"`
+JSON generator. The fields mirror `Can_ChannelConfigType` in
+`vendor/as/app/platform/simulator/src/config/Can_Cfg.c` so the file is
+ready for an emitter when one is built (`docs/AUTOAS_NOTES.md` §1.2
+"Can"; `docs/ARCHITECTURE.md` §"Layer 1").

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openvinci.dev/schema/cantp/v1.json",
+  "title": "CanTp",
+  "description": "CAN ISO-TP configuration. Fields derived from docs/AUTOAS_NOTES.md §1.2 'CanTp', vendor/as/tools/generator/CanTp.py, and the GUI schema at vendor/as/tools/json.editor/schema.json:650-673.",
+  "vendoredAsCommit": "6a52b2e7f6720ed23047bb2189aa8c67cf5ccf54",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["class", "channels"],
+  "properties": {
+    "class": { "const": "CanTp" },
+    "UseTxConfirmation": { "type": "boolean", "default": true },
+    "UsePostBuildConfig": { "type": "boolean", "default": false },
+    "MainFunctionPeriod": { "type": "integer", "minimum": 1, "default": 10 },
+    "STMinAdjust": { "type": "integer", "minimum": 0, "default": 0 },
+    "zero_cost": { "type": "string" },
+    "channels": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier",
+            "description": "Channel name. Cross-rule: CanIf must declare PDUs <name>_RX and <name>_TX with up='CanTp' (docs/EN/CanTp.md:78-92)."
+          },
+          "AddressingFormat": {
+            "type": "string",
+            "enum": ["STANDARD", "EXTENDED"],
+            "default": "STANDARD"
+          },
+          "N_TA": {
+            "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString",
+            "description": "Required iff AddressingFormat == EXTENDED."
+          },
+          "N_As": { "type": "integer", "minimum": 0, "default": 25 },
+          "N_Bs": { "type": "integer", "minimum": 0, "default": 1000 },
+          "N_Cr": { "type": "integer", "minimum": 0, "default": 1000 },
+          "STmin": { "type": "integer", "minimum": 0, "maximum": 255, "default": 0 },
+          "BS": { "type": "integer", "minimum": 0, "maximum": 255, "default": 8 },
+          "WftMax": { "type": "integer", "minimum": 0, "maximum": 255, "default": 8 },
+          "LL_DL": {
+            "type": "integer",
+            "enum": [8, 12, 16, 20, 24, 32, 48, 64],
+            "default": 8,
+            "description": "8 for classic CAN, up to 64 for CAN FD."
+          },
+          "padding": {
+            "type": ["integer", "string"],
+            "default": "0x55",
+            "description": "Padding byte. Accepts int or hex string per CanTp.py default value."
+          },
+          "ComType": {
+            "type": "string",
+            "enum": ["PHYSICAL", "FUNCTIONAL"],
+            "default": "PHYSICAL"
+          },
+          "RxPduId": { "type": "string" },
+          "TxPduId": { "type": "string" }
+        },
+        "if": {
+          "properties": { "AddressingFormat": { "const": "EXTENDED" } },
+          "required": ["AddressingFormat"]
+        },
+        "then": { "required": ["N_TA"] }
+      }
+    }
+  }
+}

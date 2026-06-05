@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openvinci.dev/schema/shared/types.json",
+  "title": "OpenVinci shared types",
+  "description": "Reusable $defs referenced by per-module schemas.",
+  "vendoredAsCommit": "6a52b2e7f6720ed23047bb2189aa8c67cf5ccf54",
+  "$defs": {
+    "HexString": {
+      "type": "string",
+      "pattern": "^0x[0-9A-Fa-f]+$",
+      "description": "Hexadecimal integer as a string (e.g. \"0x731\"). Upstream stores CAN IDs and masks this way."
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form AUTOSAR-style identifier; we do not enforce a character set."
+    },
+    "BSWModule": {
+      "type": "string",
+      "description": "Names that appear as PduR routine endpoints or CanIf 'up' values. Plus any user-defined name beginning with 'User'.",
+      "anyOf": [
+        {
+          "enum": [
+            "CanIf",
+            "CanTp",
+            "OsekNm",
+            "CanNm",
+            "PduR",
+            "Dcm",
+            "Com",
+            "LinTp",
+            "DoIP",
+            "J1939Tp",
+            "SecOC",
+            "Mirror",
+            "Xcp",
+            "CanTSyn"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^User"
+        }
+      ]
+    },
+    "NetworkKind": {
+      "type": "string",
+      "enum": ["CAN", "CANFD", "LIN"]
+    },
+    "SimDevice": {
+      "type": "string",
+      "description": "CAN/LIN device backend. Upstream-supported set (docs/CN/virtual-can-env.md).",
+      "enum": ["simulator", "simulator_v2", "qemu", "vxl", "peak", "zlg"]
+    }
+  }
+}

@@ -1,23 +1,31 @@
-# model/ — shared JSON Schemas
+# model/ — Layer-1 JSON Schemas
 
-This directory will hold the Layer-1 schemas described in
-`docs/ARCHITECTURE.md` §"Layer 1 — Model". Each schema corresponds to
-a `class` key recognized by `vendor/as`'s generator factory
-(`vendor/as/tools/generator/__init__.py:44-76`):
+Draft 2020-12 schemas, one per `class` value the upstream generator
+factory recognises (`vendor/as/tools/generator/__init__.py:44-76`):
 
-```
-model/
-  com.schema.json        # planned
-  canif.schema.json      # planned
-  cantp.schema.json      # planned
-  pdur.schema.json       # planned
-  shared/                # shared $defs (PduRef, NetworkRef, hex int, …)
-```
+| File                  | `class` discriminator | Upstream generator path                |
+|-----------------------|-----------------------|----------------------------------------|
+| `com.schema.json`     | `"Com"`               | `vendor/as/tools/generator/Com.py`     |
+| `canif.schema.json`   | `"CanIf"`             | `vendor/as/tools/generator/CanIf.py`   |
+| `cantp.schema.json`   | `"CanTp"`             | `vendor/as/tools/generator/CanTp.py`   |
+| `pdur.schema.json`    | `"PduR"`              | `vendor/as/tools/generator/PduR.py`    |
+| `can.schema.json`     | `"Can"`               | *(none — OpenVinci-only metadata around the hand-written `Can_Cfg.c`; see `docs/AUTOAS_NOTES.md` §1.2 "Can")* |
+| `shared/types.schema.json` | —                | Shared `$defs` (`HexString`, `Identifier`, `BSWModule`, `NetworkKind`, `SimDevice`) |
 
-Schemas will be authored from the generator Python, the GUI schema at
-`vendor/as/tools/json.editor/schema.json`, and the doc-comments under
-`vendor/as/doc/EN/`. See `docs/AUTOAS_NOTES.md` §1.2 for the per-module
-field tables they need to cover.
+Every schema sets `additionalProperties: true`. Upstream tolerates and
+relies on extras — for example the `-name` / `-up` "soft-comment"
+aliases in `vendor/as/app/app/config/Com/CanIf.json` and the
+`backup-routines-secoc-test-over-cantp` and `backup-channels` keys.
+Strict validation would reject those.
 
-The frontend fetches these from the backend's `/schemas` endpoint at
-runtime — they are not bundled into the JS.
+Each schema carries `vendoredAsCommit` naming the `vendor/as` SHA the
+field tables were derived from. When the submodule moves, regenerate
+the schemas against the new generator Python (`docs/ARCHITECTURE.md`
+§"Layer 1").
+
+## What's *not* here (and why)
+
+Cross-file rules — e.g. "CanTp channel `X` requires CanIf `X_RX` /
+`X_TX`" — cannot be expressed in JSON Schema. They live in Layer 2
+(`backend/app/model/` Pydantic loaders today, Layer-2 engine when it
+lands). See `docs/ARCHITECTURE.md` §2.2.

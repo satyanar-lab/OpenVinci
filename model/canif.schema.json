@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openvinci.dev/schema/canif/v1.json",
+  "title": "CanIf",
+  "description": "CAN Interface configuration as accepted by vendor/as/tools/generator/CanIf.py. Fields derived from docs/AUTOAS_NOTES.md §1.2 'CanIf' and the GUI schema at vendor/as/tools/json.editor/schema.json:544-589. `additionalProperties: true` everywhere preserves upstream extras such as the `-name` / `-up` soft-comment aliases seen in the real example config.",
+  "vendoredAsCommit": "6a52b2e7f6720ed23047bb2189aa8c67cf5ccf54",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["class", "networks"],
+  "properties": {
+    "class": { "const": "CanIf" },
+    "RxPacketPoolSize": { "type": "integer", "minimum": 0, "default": 0 },
+    "RxPacketDataSize": { "type": "integer", "minimum": 0, "default": 64 },
+    "TxPacketPoolSize": { "type": "integer", "minimum": 0, "default": 0 },
+    "TxPacketDataSize": { "type": "integer", "minimum": 0, "default": 64 },
+    "MainFunctionPeriod": { "type": "integer", "minimum": 1, "default": 10 },
+    "UsePostBuildConfig": { "type": "boolean", "default": false },
+    "UseTxCallout": { "type": "boolean", "default": false },
+    "UseRxCallout": { "type": "boolean", "default": false },
+    "networks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "RxPdus", "TxPdus"],
+        "properties": {
+          "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+          "me": {
+            "type": "string",
+            "default": "AS",
+            "description": "Self node name in the DBC."
+          },
+          "dbc": {
+            "type": "string",
+            "description": "Path to a DBC file. Must contain only COM messages — strip diag/NM/TP/XCP frames first (docs/EN/CanIf.md:46-48)."
+          },
+          "TxTimeout": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 100,
+            "description": "Non-zero enables CANIF_USE_TX_TIMEOUT (CanIf.py:47-50)."
+          },
+          "NumHth": { "type": "integer", "minimum": 1, "default": 1 },
+          "NumHrh": { "type": "integer", "minimum": 1, "default": 1 },
+          "ignore": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "DBC frame names to drop."
+          },
+          "E2E": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "E2E-protected PDU names."
+          },
+          "RxPdus": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/RxPdu" }
+          },
+          "TxPdus": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/TxPdu" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "RxPdu": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "id", "hoh", "up"],
+      "properties": {
+        "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+        "id": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
+        "hoh": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "mask": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
+        "up": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/BSWModule" }
+      }
+    },
+    "TxPdu": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "id", "hoh", "up"],
+      "properties": {
+        "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+        "id": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
+        "hoh": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "dynamic": { "type": "boolean", "default": false },
+        "up": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/BSWModule" }
+      }
+    }
+  }
+}

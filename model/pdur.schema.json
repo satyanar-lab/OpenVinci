@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openvinci.dev/schema/pdur/v1.json",
+  "title": "PduR",
+  "description": "PDU Router configuration. Fields derived from docs/AUTOAS_NOTES.md §1.2 'PduR', vendor/as/tools/generator/PduR.py:25-80, and the GUI schema at vendor/as/tools/json.editor/schema.json:609-648. `from` and `to` aliases match the upstream JSON keys verbatim.",
+  "vendoredAsCommit": "6a52b2e7f6720ed23047bb2189aa8c67cf5ccf54",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["class", "routines"],
+  "properties": {
+    "class": { "const": "PduR" },
+    "routines": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Routine" }
+    },
+    "networks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "network"],
+        "properties": {
+          "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+          "network": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/NetworkKind" },
+          "me": { "type": "string", "default": "AS" },
+          "dbc": { "type": "string" },
+          "ignore": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "memory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "size", "number"],
+        "properties": {
+          "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+          "size": { "type": "integer", "minimum": 0 },
+          "number": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Routine": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "from", "to"],
+      "properties": {
+        "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+        "from": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/BSWModule" },
+        "to": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/BSWModule" },
+        "dest": {
+          "type": "string",
+          "description": "Optional renamed PDU at destination."
+        },
+        "fake": { "type": "string" },
+        "comments": { "type": "string" },
+        "destinations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["name", "to"],
+            "properties": {
+              "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+              "to": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/BSWModule" },
+              "fake": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

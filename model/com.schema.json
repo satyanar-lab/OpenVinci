@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openvinci.dev/schema/com/v1.json",
+  "title": "Com",
+  "description": "AUTOSAR Com configuration. Fields derived from docs/AUTOAS_NOTES.md §1.2 'Com', vendor/as/tools/generator/Com.py:11-100, and the GUI schema at vendor/as/tools/json.editor/schema.json:715-739+. Note the upstream typo `enable_message_rx_notificaiton` is preserved verbatim (schema.json:735).",
+  "vendoredAsCommit": "6a52b2e7f6720ed23047bb2189aa8c67cf5ccf54",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["class", "networks"],
+  "properties": {
+    "class": { "const": "Com" },
+    "E2E": {
+      "type": "string",
+      "description": "Relative path to a sibling E2E.json (e.g. \"../E2E/E2E.json\")."
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "group_signals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "networks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Network" }
+    }
+  },
+  "$defs": {
+    "Network": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "network", "me"],
+      "properties": {
+        "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+        "network": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/NetworkKind" },
+        "device": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/SimDevice" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 0 },
+        "baudrate": { "type": "integer", "minimum": 1, "default": 500000 },
+        "me": { "type": "string", "default": "AS" },
+        "use_dbc": { "type": "boolean", "default": false },
+        "dbc": { "type": "string" },
+        "use_ldf": { "type": "boolean", "default": false },
+        "ldf": { "type": "string" },
+        "timeout_factor": { "type": "integer", "minimum": 0, "default": 10 },
+        "enable_message_tx_callout": { "type": "boolean", "default": false },
+        "enable_message_rx_callout": { "type": "boolean", "default": false },
+        "enable_message_rx_notificaiton": {
+          "type": "boolean",
+          "default": false,
+          "description": "Upstream spelling — sic. Matches schema.json:735."
+        },
+        "enable_signal_rx_notification": { "type": "boolean", "default": false },
+        "enable_message_rx_timeout_notificaiton": {
+          "type": "boolean",
+          "default": false,
+          "description": "Upstream spelling — sic. Matches schema.json:737."
+        },
+        "enable_signal_rx_timeout_notification": { "type": "boolean", "default": false },
+        "trigger": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "groups": {
+          "type": "array",
+          "description": "Group-signal definitions. Each item is a single-key object mapping group name to signal names.",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Message" }
+        },
+        "E2E": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/E2EBinding" }
+        }
+      }
+    },
+    "Message": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "id", "dlc", "node", "signals"],
+      "properties": {
+        "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+        "id": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
+        "dlc": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "node": { "type": "string" },
+        "CycleTime": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cycle in ms; 0 means non-cyclic."
+        },
+        "signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Signal" }
+        }
+      }
+    },
+    "Signal": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "start", "size", "endian"],
+      "properties": {
+        "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+        "start": { "type": "integer", "minimum": 0 },
+        "size": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "endian": { "type": "string", "enum": ["big", "little"] },
+        "sign": { "type": "string", "enum": ["+", "-"], "default": "+" },
+        "InitialValue": {
+          "description": "Initial value. Plain numbers, hex strings, list expressions like '[i for i in range(32)]', or arrays.",
+          "anyOf": [
+            { "type": "number" },
+            { "type": "string" },
+            { "type": "array" }
+          ]
+        },
+        "factor": { "type": "number", "default": 1 },
+        "offset": { "type": "number", "default": 0 },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "node": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "isGroup": { "type": "boolean", "default": false },
+        "group": { "type": "string" },
+        "InvalidNotification": { "type": "string" },
+        "RxNotification": { "type": "string" },
+        "RxTOut": { "type": "string" },
+        "FirstTimeout": { "type": "integer", "minimum": 0 },
+        "Timeout": { "type": "integer", "minimum": 0 },
+        "DataInvalidAction": {
+          "type": "string",
+          "enum": ["NOTIFY", "REPLACE", "NONE", "SUBSTITUTE"],
+          "default": "NOTIFY"
+        },
+        "RxDataTimeoutAction": {
+          "type": "string",
+          "enum": ["NONE", "NOTIFY", "REPLACE", "SUBSTITUTE"],
+          "default": "NONE"
+        },
+        "ErrorNotification": { "type": "string" },
+        "TxNotification": { "type": "string" }
+      }
+    },
+    "E2EBinding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "profile"],
+      "properties": {
+        "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
+        "profile": {
+          "type": "string",
+          "description": "E2E profile, e.g. \"P11\". See examples in app/app/config/Com/Com.json."
+        }
+      }
+    }
+  }
+}

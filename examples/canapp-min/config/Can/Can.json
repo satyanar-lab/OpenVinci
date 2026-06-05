@@ -1,0 +1,9 @@
+{
+  "class": "Can",
+  "controllers": [
+    { "name": "CAN0", "hwInstanceId": 0, "baudrate": 500000, "samplePoint": 75, "device": "simulator_v2" },
+    { "name": "CAN1", "hwInstanceId": 1, "baudrate": 500000, "samplePoint": 75, "device": "simulator_v2" },
+    { "name": "CAN2", "hwInstanceId": 2, "baudrate": 500000, "samplePoint": 75, "device": "simulator_v2" },
+    { "name": "CAN3", "hwInstanceId": 3, "baudrate": 500000, "samplePoint": 75, "device": "simulator_v2" }
+  ]
+}
