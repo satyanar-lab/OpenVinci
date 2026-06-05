@@ -25,3 +25,6 @@ dist/
 backend/.openvinci-pid
 frontend/.openvinci-pid
 build/
+
+# Local agent state (Claude Code)
+.claude/
