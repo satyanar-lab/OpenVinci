@@ -1,0 +1,3 @@
+[submodule "vendor/as"]
+	path = vendor/as
+	url = https://github.com/autoas/as.git
