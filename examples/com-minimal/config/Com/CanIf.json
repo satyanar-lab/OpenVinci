@@ -1,0 +1,15 @@
+{
+  "class": "CanIf",
+  "networks": [
+    {
+      "name": "CAN0",
+      "me": "AS",
+      "RxPdus": [
+        { "name": "CAN0_RX_MSG", "id": "0x101", "hoh": 0, "up": "PduR" }
+      ],
+      "TxPdus": [
+        { "name": "CAN0_TX_MSG", "id": "0x100", "hoh": 0, "up": "PduR" }
+      ]
+    }
+  ]
+}

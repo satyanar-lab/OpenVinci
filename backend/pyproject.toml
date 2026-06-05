@@ -6,6 +6,14 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
+    # vendor/as code generators import these at run time
+    # (see vendor/as/tools/generator/*.py).
+    "scons>=4.5",
+    "pycrc>=0.9",
+    "bitarray>=2",
+    "ply>=3.11",
+    "Jinja2>=3",
+    "autosar>=0.4",
 ]
 
 [project.optional-dependencies]

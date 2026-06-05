@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +12,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.model import SUPPORTED_CLASSES, UnknownConfigClassError, dump, load
+from engine import load_project
+from gen import generate_and_compile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EXAMPLES = REPO_ROOT / "examples"
@@ -117,6 +122,35 @@ def create_app() -> FastAPI:
             )
         path = _schemas_dir() / SCHEMA_FILES[cls]
         return json.loads(path.read_text())
+
+    @app.post("/api/generate")
+    def api_generate(project: str = Query("com-minimal")) -> dict[str, Any]:
+        """Stage the project, run upstream generators, gcc-compile the result.
+
+        Returns `{project, files, compileResult}` per the prompt. The work
+        directory is created in tempfile space and cleaned up on response;
+        only the metadata + diagnostics survive.
+        """
+        project_dir = _examples_dir() / project
+        if not project_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"project not found: {project}")
+        try:
+            proj = load_project(project_dir)
+        except UnknownConfigClassError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        workdir = Path(tempfile.mkdtemp(prefix="openvinci-gen-"))
+        try:
+            result = generate_and_compile(proj, workdir, source_dir=project_dir)
+            return {
+                "project": project,
+                "files": [asdict(f) for f in result.files],
+                "compileResult": asdict(result.compile_result)
+                if result.compile_result
+                else None,
+            }
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
     return app
 
