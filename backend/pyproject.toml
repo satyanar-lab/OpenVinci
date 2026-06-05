@@ -6,6 +6,8 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",  # FastAPI uploads via /api/import/dbc
+    "cantools>=39",
     # vendor/as code generators import these at run time
     # (see vendor/as/tools/generator/*.py).
     "scons>=4.5",
@@ -15,6 +17,9 @@ dependencies = [
     "Jinja2>=3",
     "autosar>=0.4",
 ]
+
+[project.scripts]
+openvinci-import-dbc = "importer.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -28,7 +33,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["app*", "engine*"]
+include = ["app*", "engine*", "gen*", "importer*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

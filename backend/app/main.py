@@ -12,8 +12,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.model import SUPPORTED_CLASSES, UnknownConfigClassError, dump, load
-from engine import load_project
+from engine import load_project, validate
 from gen import generate_and_compile
+from importer import import_dbc_file
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EXAMPLES = REPO_ROOT / "examples"
@@ -122,6 +123,60 @@ def create_app() -> FastAPI:
             )
         path = _schemas_dir() / SCHEMA_FILES[cls]
         return json.loads(path.read_text())
+
+    @app.post("/api/import/dbc")
+    def api_import_dbc(
+        dbc: str = Query(
+            ..., description="Path to a .dbc file (repo-relative OK)."
+        ),
+        network: str = Query("CAN0"),
+        me: str = Query("AS"),
+        baudrate: int = Query(500000, ge=1),
+    ) -> dict[str, Any]:
+        """Parse a DBC, build a fresh project, auto-wire, return the result.
+
+        Body shape: `{source, network, me, project: {Com, CanIf, PduR, Can},
+        validation: {ok, errorCount, warningCount, issues}}`. The endpoint
+        does not persist; it's a "preview" the UI can save explicitly.
+        """
+        dbc_path = Path(dbc)
+        if not dbc_path.is_absolute():
+            dbc_path = REPO_ROOT / dbc_path
+        if not dbc_path.is_file():
+            raise HTTPException(status_code=404, detail=f"dbc not found: {dbc}")
+
+        project = import_dbc_file(
+            dbc_path,
+            network_name=network,
+            me=me,
+            baudrate=baudrate,
+        )
+        report = validate(project)
+        try:
+            source = str(dbc_path.relative_to(REPO_ROOT))
+        except ValueError:
+            source = str(dbc_path)
+        return {
+            "source": source,
+            "network": network,
+            "me": me,
+            "project": project.raw,
+            "validation": {
+                "ok": report.ok,
+                "errorCount": len(report.errors),
+                "warningCount": len(report.warnings),
+                "issues": [
+                    {
+                        "rule": i.rule,
+                        "severity": i.severity.value,
+                        "message": i.message,
+                        "module": i.location.module,
+                        "path": list(i.location.path),
+                    }
+                    for i in report.issues
+                ],
+            },
+        }
 
     @app.post("/api/generate")
     def api_generate(project: str = Query("com-minimal")) -> dict[str, Any]:

@@ -413,7 +413,7 @@ def test_com_tx_message_must_have_canif_tx_pdu__missing():
     assert fix is not None
     op = fix.patches["CanIf"][0]
     assert op["path"].endswith("/TxPdus/-")
-    assert op["value"] == {"name": "TX_MSG", "id": "0x100", "hoh": 0, "up": "PduR"}
+    assert op["value"] == {"name": "CAN0_TX_MSG", "id": "0x100", "hoh": 0, "up": "PduR"}
 
 
 def test_com_rx_message_must_have_canif_rx_pdu__missing():

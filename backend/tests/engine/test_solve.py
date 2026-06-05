@@ -127,7 +127,7 @@ def test_solve_all_creates_canif_pdu_for_com_message_and_then_can_controller():
     )
     resolved, remaining = solve_all(p)
     assert "CAN0" in resolved.can_controllers()
-    assert "TX_MSG" in resolved.canif_tx_pdu_names()
+    assert "CAN0_TX_MSG" in resolved.canif_tx_pdu_names()
     assert validate(resolved).ok
 
 

@@ -13,7 +13,11 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from .derive import derive_canif_pdu_for_com_message, message_direction
+from .derive import (
+    derive_canif_pdu_for_com_message,
+    derived_pdu_name,
+    message_direction,
+)
 from .project import Project
 from .types import Fix, Issue, Location, Severity
 
@@ -363,7 +367,9 @@ def com_message_has_canif_pdu(project: Project) -> Iterable[Issue]:
         for mi, msg in enumerate(net.messages or []):
             direction = message_direction(msg, net)
             target_names = tx_names if direction == "Tx" else rx_names
-            if msg.name in target_names:
+            expected_name = derived_pdu_name(msg, net)
+            # Tolerate the bare message name too — old configs may carry it.
+            if expected_name in target_names or msg.name in target_names:
                 continue
             expected_pdu = derive_canif_pdu_for_com_message(msg, net)
             field = "TxPdus" if direction == "Tx" else "RxPdus"

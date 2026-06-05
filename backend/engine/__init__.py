@@ -17,6 +17,7 @@ from .derive import (
     derive_canif_pdus_from_com,
     derive_pdur_routine_for_com_message,
     derive_pdur_routines_from_com,
+    derived_pdu_name,
     message_direction,
 )
 from .project import (
@@ -44,6 +45,7 @@ __all__ = [
     "derive_canif_pdus_from_com",
     "derive_pdur_routine_for_com_message",
     "derive_pdur_routines_from_com",
+    "derived_pdu_name",
     "empty_project",
     "load_project",
     "message_direction",

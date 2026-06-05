@@ -24,17 +24,41 @@ def message_direction(message: Message, network: ComNetwork) -> Direction:
     return "Tx" if message.node == network.me else "Rx"
 
 
+def derived_pdu_name(message: Message, network: ComNetwork) -> str:
+    """The PDU/routine name vendor/as's generators expect.
+
+    Mirrors `vendor/as/tools/generator/Com.py` post() at lines 717-730,
+    which auto-appends `_TX`/`_RX` to message names whose macroized
+    form doesn't already contain "TX"/"RX", then network-prefixes
+    everything. The combined name is what PduR and CanIf reference,
+    so we have to compute the same string here for the auto-fix /
+    auto-wire to produce links that resolve.
+
+        STATUS (Tx)    → CAN0_STATUS_TX
+        HEARTBEAT (Rx) → CAN0_HEARTBEAT_RX
+        TX_MSG (Tx)    → CAN0_TX_MSG       (no suffix; name already has "TX")
+        RX_MSG (Rx)    → CAN0_RX_MSG
+    """
+    direction = message_direction(message, network)
+    base = message.name
+    upper = base.upper()
+    if direction == "Tx" and "TX" not in upper:
+        base = f"{base}_TX"
+    elif direction == "Rx" and "RX" not in upper:
+        base = f"{base}_RX"
+    return f"{network.name}_{base}"
+
+
 def derive_canif_pdu_for_com_message(
     message: Message, network: ComNetwork, *, hoh: int = 0
 ) -> dict[str, Any]:
     """The CanIf PDU entry a Com message implies.
 
     `up` is "PduR" because Com messages reach CanIf through PduR
-    routing (see vendor/as app/app/config/Com/PduR.json for the
-    canonical wiring pattern).
+    routing.
     """
     return {
-        "name": message.name,
+        "name": derived_pdu_name(message, network),
         "id": message.id,
         "hoh": hoh,
         "up": "PduR",
@@ -46,9 +70,10 @@ def derive_pdur_routine_for_com_message(
 ) -> dict[str, Any]:
     """The PduR routine that connects Com ⇄ CanIf for one message."""
     direction = message_direction(message, network)
+    name = derived_pdu_name(message, network)
     if direction == "Tx":
-        return {"name": message.name, "from": "Com", "to": "CanIf"}
-    return {"name": message.name, "from": "CanIf", "to": "Com"}
+        return {"name": name, "from": "Com", "to": "CanIf"}
+    return {"name": name, "from": "CanIf", "to": "Com"}
 
 
 def derive_canif_pdus_from_com(network: ComNetwork) -> dict[str, list[dict[str, Any]]]:
