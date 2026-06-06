@@ -19,7 +19,10 @@ jobs:
       - name: Check out OpenVinci (with vendor/as submodule)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          # `true` (not `recursive`) — vendor/as itself contains a nested
+          # `app/platform/qemu` submodule without a URL in its .gitmodules
+          # that we don't need.
+          submodules: true
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
