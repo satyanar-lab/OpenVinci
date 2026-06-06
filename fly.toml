@@ -1,0 +1,73 @@
+# fly.toml — Fly.io deployment config for OpenVinci.
+#
+# This file is meant to be opened with `fly launch` from a fresh
+# clone. `fly launch` will preserve the bulk of it and rewrite only
+# `app` (it must be globally unique on Fly) and `primary_region`
+# (you'll be prompted). The values below are tuned for a small,
+# single-machine demo deployment that can serve the SPA + run gcc
+# under modest load.
+#
+# IMPORTANT — read the "Public deployment" section of README.md
+# BEFORE flipping this on for unauthenticated traffic. Running gcc
+# on user input is a code-execution surface and the upstream
+# vendor/as license is study/evaluation only.
+
+# Replace with your own globally-unique Fly app name. `fly launch`
+# will offer to do this for you.
+app = "openvinci"
+
+# Pick a region close to you / your users. iad = Ashburn, VA.
+# Change with `fly regions set` after launch.
+primary_region = "iad"
+
+# Build from the repo-root Dockerfile (multi-stage, see Dockerfile
+# top of file for the layout).
+[build]
+  dockerfile = "Dockerfile"
+
+# Per-process env. Tight knobs for public exposure.
+[env]
+  # Body cap for /api/generate and /api/import/dbc/upload. Local
+  # default is 20 MB; we ship 10 MB here because public traffic
+  # has no business sending us a 20 MB DBC.
+  OPENVINCI_MAX_BODY_BYTES = "10485760"
+  # gcc -fsyntax-only on a single *_Cfg.c finishes in well under a
+  # second; 20 s leaves headroom for occasional cold-cache slowness
+  # without giving an attacker a 30 s window to pin the worker.
+  OPENVINCI_GCC_TIMEOUT_S = "20"
+
+# The Dockerfile EXPOSEs 8000; Fly's edge proxies :443 to the
+# machine's :8000. Auto-stop the machine when idle so a parked demo
+# costs nothing — `auto_start_machines` brings it back on first
+# request (cold boot ~200 ms).
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  # /health is a one-line liveness probe (see backend/app/main.py).
+  # Two consecutive failures + a grace period catches a crash loop
+  # without flapping under deploy.
+  [[http_service.checks]]
+    method   = "GET"
+    path     = "/health"
+    protocol = "http"
+    interval = "30s"
+    timeout  = "5s"
+    grace_period = "15s"
+
+# Rolling for a single-machine deploy so we don't try to canary
+# with no second instance to canary against.
+[deploy]
+  strategy = "rolling"
+
+# Machine size — gcc on small configs is comfortable in a shared
+# vCPU + 1 GB. If you import larger DBCs and the L1 compile step
+# starts to OOM, bump `memory` first; `cpus` second.
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "1gb"
+  cpus   = 1

@@ -111,6 +111,114 @@ no-coredump ulimit at entry, and caps the gcc subprocess at 30s
 `/api/generate` is capped at 20 MB (override with
 `-e OPENVINCI_MAX_BODY_BYTES`).
 
+## Public deployment (Fly.io)
+
+The repo ships a ready-made [`fly.toml`](fly.toml) for
+[Fly.io](https://fly.io) — that's the path documented here.
+[Render.com](https://render.com) is an equivalent alternative; the
+same `Dockerfile` works on a Render "Web Service" pointing at the
+repo Dockerfile with internal port 8000.
+
+### Deploy to Fly.io
+
+```sh
+# 1. install flyctl + sign in
+curl -L https://fly.io/install.sh | sh    # or `brew install flyctl`
+fly auth login                            # or `fly auth signup`
+
+# 2. initialise vendor/as so the Dockerfile build context has it
+git submodule update --init vendor/as
+
+# 3. launch — the bundled fly.toml is detected automatically
+fly launch --no-deploy   # accept the app name or pick your own;
+                         # `--no-deploy` lets you review the resulting
+                         # fly.toml before the first machine spins up.
+fly deploy               # builds the image on Fly's builder and boots
+                         # one shared-cpu-1x / 1 GB machine.
+
+# 4. open it
+fly open
+```
+
+The bundled `fly.toml` exposes port 8000 (matches the Dockerfile),
+runs a `/health` check, force-redirects HTTP → HTTPS, auto-stops the
+machine when idle (cold-start ≈200 ms on first request), and ships
+tighter env defaults than the local image (10 MB body cap, 20 s gcc
+timeout). It does NOT commit any secrets — there are none to set.
+
+### ⚠️ Honest caveats before flipping this on for public traffic
+
+A live OpenVinci endpoint is fundamentally different from a demo
+binary you hand to a colleague. Read these three before pointing real
+users at the URL.
+
+**1. Security — this is a code-execution surface.**
+
+`/api/generate` and `/api/import/dbc/upload` accept user-controlled
+input that ultimately reaches `gcc -c -fsyntax-only` on the server.
+The mitigations the project ships are:
+
+- The process runs as a non-root user (`openvinci`, uid 1000) — the
+  Dockerfile enforces this.
+- gcc is wrapped in a hard timeout (`OPENVINCI_GCC_TIMEOUT_S`,
+  default 30 s, `fly.toml` ships 20 s).
+- Request body is capped (`OPENVINCI_MAX_BODY_BYTES`, default 20 MB,
+  `fly.toml` ships 10 MB).
+- The container entrypoint sets `ulimit -c 0`, file-size cap 512 MB,
+  process cap 1024 (see `docker/entrypoint.sh`).
+
+**These are mitigations, not a hardened boundary.** For anything past
+a personal demo you should:
+
+- Put the service behind an auth gate
+  ([Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/),
+  [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), basic
+  auth in a reverse proxy, etc.).
+- Add rate-limiting at the edge (Cloudflare WAF, Fly's per-IP rate
+  limits, a CDN tier with throttling).
+- Run it on its own Fly org with no other workloads, so a break-out
+  doesn't pivot into anything that matters.
+
+There is **no sandbox** between user input and gcc. Treat the
+endpoint like any other code-execution service.
+
+**2. License — upstream autoas/as is study/evaluation only.**
+
+`vendor/as` is dual-licensed under GPLv3 **and** a separate
+commercial license held by Parai Wang. The upstream README is
+explicit: it is "only free to be used for evaluation and study
+purpose." A public service that generates BSW code for arbitrary
+visitors plausibly exceeds that scope.
+
+If you intend to run a public OpenVinci endpoint that real users use
+to produce real configs, you should either:
+
+- comply with GPLv3 yourself for the whole stack, or
+- contact Parai Wang (`parai@foxmail.com`) for a commercial license.
+
+A purely-personal / a-few-engineers-evaluating demo is what the
+upstream allows. Anything bigger is on you.
+
+**3. Cost / resources — this is not a free static tier.**
+
+The L1 generate+compile path needs a real CPU and real RAM. The
+bundled `fly.toml` asks for:
+
+- `shared-cpu-1x` (1 shared vCPU)
+- 1 GB RAM
+- HTTPS on the default Fly subdomain
+
+Auto-stop keeps the cost near zero for an idle demo but you can
+expect roughly **$5 – $10 / month** for casual demo traffic on Fly;
+more if you size up or run multiple machines. Render's equivalent
+"Starter" instance type is similar pricing, same Dockerfile, same
+port 8000.
+
+If you wire an auth gate, store its token via `fly secrets set NAME=…`
+(or your host's equivalent) — **do not commit it.** OpenVinci's
+`.dockerignore` already excludes `.env` patterns so accidental
+secrets don't slip into the image either.
+
 ## Repository layout
 
 ```

@@ -20,6 +20,16 @@ build/
 .openvinci/
 .claude/
 
+# Local secrets / env / credentials — never bake into an image.
+.env
+.env.*
+**/.env
+**/.env.*
+secrets/
+**/*.pem
+**/*.key
+.fly/
+
 # Python
 **/__pycache__
 **/*.py[cod]
