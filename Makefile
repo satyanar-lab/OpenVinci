@@ -16,7 +16,7 @@ PYENV := PYTHONPATH= PYTHONNOUSERSITE=1
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8000
 
-.PHONY: help install install-backend install-frontend dev test test-backend test-frontend test-functional clean
+.PHONY: help install install-backend install-frontend dev test test-backend test-frontend test-functional test-golden verify clean
 
 help:
 	@echo "OpenVinci — make targets"
@@ -24,6 +24,8 @@ help:
 	@echo "  make dev             run backend + frontend in one process group (Ctrl+C kills both)"
 	@echo "  make test            run pytest and vitest (unit tests)"
 	@echo "  make test-functional run the L2 functional loopback (slow, needs gcc)"
+	@echo "  make test-golden     run the L3 golden-file regression"
+	@echo "  make verify          run the full verification report (all levels)"
 	@echo "  make clean           remove .venv, node_modules, and build/ artifacts"
 
 install: install-backend install-frontend
@@ -46,6 +48,12 @@ test: test-backend test-frontend
 
 test-functional:
 	OPENVINCI_RUN_FUNCTIONAL=1 $(PYENV) $(PYTEST) $(ROOT)/tests/functional -v
+
+test-golden:
+	$(PYENV) $(PYTEST) $(ROOT)/tests/golden -v
+
+verify:
+	$(ROOT)/scripts/verify.sh
 
 test-backend:
 	cd $(BACKEND) && $(PYENV) $(PYTEST)

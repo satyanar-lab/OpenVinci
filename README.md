@@ -32,6 +32,23 @@ make dev             # backend on :8000, frontend on :5173 (Ctrl+C kills both)
 Open http://localhost:5173 — the page shows the `Com.json` from
 `examples/canapp-min/` loaded via the backend's stub `/api/config`.
 
+## Verification levels
+
+```sh
+make verify     # runs L1 (validate + generate+compile) + L2 (functional) + L3 (golden)
+```
+
+Prints a per-level pass/fail report. Each level is also independently runnable:
+
+| Level | Target | What it proves |
+|-------|--------|----------------|
+| L1 validate | `make test-backend` | Round-trip fidelity, schema validation, engine rules, derive, solve |
+| L1 generate+compile | `pytest backend/tests/test_gen_pipeline.py` | Generated `*_Cfg.c` parses cleanly against `vendor/as` BSW headers |
+| L2 functional loopback | `make test-functional` | `vendor/as`'s CAN simulator broker transports frames byte-exact end-to-end |
+| L3 golden snapshot | `make test-golden` | Generated output matches checked-in snapshot under `tests/golden/<example>/expected/`. Rebaseline with `pytest tests/golden --update-golden`. |
+
+CI runs `scripts/verify.sh` on every push (`.github/workflows/verify.yml`).
+
 ## Generate + compile (VERIFICATION LEVEL 1)
 
 ```sh
