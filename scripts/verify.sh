@@ -2,14 +2,25 @@
 # OpenVinci verification — run every level in order, print a single report.
 #
 # Levels:
-#   1. validate           — model + engine unit tests (round-trip, schema,
-#                           validation rules, derive, solve)
-#   2. generate+compile   — gen pipeline: stage → vendor/as generators →
-#                           gcc -c -fsyntax-only against BSW headers
-#   3. functional loopback — vendor/as can_simulator broker, raw socket
-#                           frame transport with byte-exact fidelity
-#   4. golden             — regenerate, normalize timestamps, byte-diff
-#                           against tests/golden/<example>/expected/
+#   1. validate              — model + engine unit tests (round-trip,
+#                              schema, validation rules, derive, solve)
+#   2. generate+compile      — gen pipeline: stage → vendor/as
+#                              generators → gcc -c -fsyntax-only
+#                              against BSW headers
+#   3. broker transport      — vendor/as can_simulator broker, raw
+#                              socket frame transport with byte-exact
+#                              fidelity (TestBrokerLoopback)
+#   4. end-to-end (generated
+#      stack)                — gcc-link the generated *_Cfg.c with
+#                              Com.c / CanIf.c / PduR.c / mcal-Can.c
+#                              + simulator Can driver, drive its Tx
+#                              and Rx CLI modes, and assert a single
+#                              byte round-trips end-to-end through the
+#                              generated CanIf→PduR→Com path
+#                              (TestComStackLoopback)
+#   5. golden                — regenerate, normalize timestamps,
+#                              byte-diff against
+#                              tests/golden/<example>/expected/
 #
 # Each level reports PASS/FAIL on its own line. Exit code = 0 iff all pass.
 
@@ -116,11 +127,25 @@ run_level "L1 generate+compile" "$LOG_DIR/l1-gen-compile.log" \
     "$ROOT/backend/tests/test_gen_stage.py" \
     "$ROOT/backend/tests/test_api_generate.py"
 
-# ---- L2 functional loopback -----------------------------------------
-OPENVINCI_RUN_FUNCTIONAL=1 \
-    run_level "L2 functional loopback" "$LOG_DIR/l2-functional.log" \
+# ---- L2 broker transport --------------------------------------------
+# Just the wire-protocol layer: TestBrokerLoopback. The broker fixture
+# builds vendor/as's can_simulator and asserts it forwards frames
+# byte-exact between Python clients. This proves nothing about our
+# generated config — that's L2 end-to-end, next.
+run_level "L2 broker transport" "$LOG_DIR/l2-broker.log" \
     env OPENVINCI_RUN_FUNCTIONAL=1 \
-    "$PYTEST" "$ROOT/tests/functional"
+    "$PYTEST" "$ROOT/tests/functional/test_loopback.py::TestBrokerLoopback"
+
+# ---- L2 end-to-end (generated stack) --------------------------------
+# The real claim: gcc-link the *_Cfg.c generated from com-minimal with
+# Com.c / CanIf.c / PduR.c / mcal-Can.c + the simulator Can driver,
+# then drive the node through its Tx and Rx CLI modes. A Tx assertion
+# (id 0x100 appears on the bus) and an Rx assertion (Com_ReceiveSignal
+# returns the exact byte the harness injected on 0x101) close the
+# loop end-to-end through the generated CanIf→PduR→Com path.
+run_level "L2 end-to-end (generated stack)" "$LOG_DIR/l2-e2e.log" \
+    env OPENVINCI_RUN_FUNCTIONAL=1 \
+    "$PYTEST" "$ROOT/tests/functional/test_loopback.py::TestComStackLoopback"
 
 # ---- L3 golden -------------------------------------------------------
 run_level "L3 golden snapshot" "$LOG_DIR/l3-golden.log" \
