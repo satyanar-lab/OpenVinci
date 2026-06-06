@@ -1,64 +1,203 @@
 # OpenVinci
 
-An open-source, developer-focused configurator for the AUTOSAR Classic
-COM stack, built on top of [`autoas/as`](https://github.com/autoas/as).
+An open-source, developer-focused configurator for the **AUTOSAR Classic
+COM stack**. Inspired by Vector DaVinci Configurator, built on top of
+[`autoas/as`](https://github.com/autoas/as) — a complete open-source
+AUTOSAR 4.4 BSW implementation by Parai Wang.
 
-## Docs
+What you get:
 
-- [`docs/AUTOAS_NOTES.md`](docs/AUTOAS_NOTES.md) — verified facts about
-  the upstream config formats, generators, and host-sim build chain.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the four-layer design.
-- [`CLAUDE.md`](CLAUDE.md) — repo conventions and build/test commands.
+- A **DaVinci-style 3-pane web UI** (modules / containers / parameters
+  tree, schema-driven typed editor with cross-reference dropdowns,
+  live Problems panel with one-click auto-fixes).
+- **Communication-matrix import** — drop a `.dbc`, get a fully wired
+  project (Com, CanIf, PduR, Can) in one call.
+- **Generate + compile in one step** — emits the upstream
+  `*_Cfg.{h,c}` and verifies them against the BSW headers.
+- **A four-level verification report** (`scripts/verify.sh`) that
+  states exactly what we've proven — and what we haven't.
 
-## Layout
+OpenVinci doesn't replace `autoas/as`. It wraps it. Every JSON file
+OpenVinci edits is the same shape `vendor/as`'s generators already
+consume; you can drop an OpenVinci project into a checkout of
+`autoas/as` and `scons --app=CanApp` without changing a byte.
 
-```
-backend/    FastAPI service (Layer 2 + 3)
-frontend/   React + Vite + TypeScript app (Layer 4)
-model/      JSON Schemas (Layer 1)              — placeholder for now
-examples/   Real autoas/as configs used as fixtures + smoke tests
-vendor/as/  autoas/as as a git submodule
-```
+## Upstream license note (read this before commercial use)
+
+`autoas/as` is dual-licensed under **GPLv3 and a separate commercial
+license** by Parai Wang. The upstream README states the project is
+"only free to be used for evaluation and study purpose." OpenVinci
+vendors the source as a git submodule under [`vendor/as`](vendor/as)
+and does not relicense it.
+
+- **Evaluation / study / personal exploration**: fine under the
+  upstream's terms.
+- **Anything else** (shipping a product that links to or generates
+  from `vendor/as`, distributing derived BSW code, etc.): you need
+  to either comply with GPLv3 yourself or contact Parai Wang at
+  `parai@foxmail.com` for a commercial license.
+
+OpenVinci itself is MIT-licensed (see `LICENSE` once added) — but
+that doesn't change `autoas/as`'s terms. The licenses compose; the
+stricter one wins.
 
 ## Quick start
 
 ```sh
-git submodule update --init --recursive
-make install         # python venv + npm install
-make test            # pytest + vitest
-make dev             # backend on :8000, frontend on :5173 (Ctrl+C kills both)
+git submodule update --init  # see CI notes if recursive trips on qemu
+make install                  # python venv + npm install
+make test                     # pytest + vitest (~3s)
+make dev                      # backend :8000, frontend :5173 (Ctrl+C kills both)
 ```
 
-Open http://localhost:5173 — the page shows the `Com.json` from
-`examples/canapp-min/` loaded via the backend's stub `/api/config`.
+Open <http://localhost:5173>. The UI loads `examples/com-minimal` by
+default. Try:
 
-## Verification levels
+1. **Import DBC** → pick `examples/dbc/sample.dbc`, click Import.
+   Watch the tree fill in.
+2. Select a Com signal in the tree; edit `factor` or `offset`.
+3. **Generate** → see a green compile status with file list.
+4. Open the **Problems** panel after a deliberate break (e.g. delete
+   a Can controller) and click **Fix** — the engine re-wires it.
+
+For a scripted, headless version of that walkthrough, see
+[`docs/DEMO.md`](docs/DEMO.md) and run:
 
 ```sh
-make verify     # runs L1 (validate + generate+compile) + L2 (functional) + L3 (golden)
+scripts/demo.sh
 ```
 
-Prints a per-level pass/fail report. Each level is also independently runnable:
+## Repository layout
 
-| Level | Target | What it proves |
-|-------|--------|----------------|
-| L1 validate | `make test-backend` | Round-trip fidelity, schema validation, engine rules, derive, solve |
-| L1 generate+compile | `pytest backend/tests/test_gen_pipeline.py` | Generated `*_Cfg.c` parses cleanly against `vendor/as` BSW headers |
-| L2 functional loopback | `make test-functional` | `vendor/as`'s CAN simulator broker transports frames byte-exact end-to-end |
-| L3 golden snapshot | `make test-golden` | Generated output matches checked-in snapshot under `tests/golden/<example>/expected/`. Rebaseline with `pytest tests/golden --update-golden`. |
+```
+backend/           FastAPI service: model layer (Pydantic), engine
+                   (validation + derivation + solver), gen adapter
+                   (vendor/as wrapper + gcc compile check), DBC importer.
+frontend/          React + Vite + TS UI (DaVinci-style 3-pane).
+model/             JSON Schemas for each `class` (Can, CanIf, CanTp,
+                   PduR, Com) + shared $defs.
+examples/          Real autoas/as configs used as fixtures.
+  canapp-min/      Mirror of vendor/as/app/app/config (round-trip fixture).
+  com-minimal/     Minimal generate+compile-clean project (L1/L3 fixture).
+  dbc/             Sample CAN .dbc the importer can ingest.
+tests/
+  functional/      VERIFICATION LEVEL 2 — pytest + vendor/as CAN broker.
+  golden/          VERIFICATION LEVEL 3 — snapshot regression.
+scripts/
+  verify.sh        Run all verification levels, print PASS/FAIL report.
+  demo.sh          Headless happy-path walkthrough.
+vendor/as/         autoas/as git submodule.
+docs/
+  AUTOAS_NOTES.md  Verified facts about the upstream config + build chain.
+  ARCHITECTURE.md  The four-layer design.
+  DEMO.md          5-minute walkthrough.
+```
 
-CI runs `scripts/verify.sh` on every push (`.github/workflows/verify.yml`).
+Top-level conventions and per-layer notes live in [`CLAUDE.md`](CLAUDE.md).
 
-## Generate + compile (VERIFICATION LEVEL 1)
+## How generated files are verified
+
+OpenVinci ships four verification levels. Each one makes a *specific*
+claim. Together they say: the configs OpenVinci emits are
+**structurally valid, syntactically + semantically valid C against the
+BSW headers, byte-stable across regenerations, and run on top of a
+runtime simulator that transports frames byte-exact end-to-end.**
+
+That is precisely what they say. It is **not** what they don't say —
+see the disclaimer below.
+
+| Level | Test target | Concrete claim |
+|------|---|---|
+| **L1 validate** | `make test-backend` | Every example loads through the typed model, round-trips serializer ↔ JSON without drift, validates against the Layer-1 JSON Schemas (Draft 2020-12), and passes every engine rule (cross-module reference integrity, multiplicity, type/range). 134 tests. |
+| **L1 generate+compile** | `pytest backend/tests/test_gen_pipeline.py` | The upstream `vendor/as` generators emit `*_Cfg.{h,c}` from our project that parses cleanly with `gcc -c -fsyntax-only -Wall` against the BSW headers in `vendor/as/infras/communication/`. Catches syntax errors, type mismatches with the BSW, missing struct fields, missing includes. |
+| **L2 functional loopback** | `make test-functional` | `vendor/as`'s `can_simulator` broker — the same TCP wire protocol the simulator-platform `Can.cpp` driver speaks at runtime — comes up, accepts clients, and transports frames byte-exact between peers. Combined with L1, this means the configs OpenVinci emits are valid C for a driver that, at runtime, actually moves data. |
+| **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
+
+Run them all:
 
 ```sh
-curl -X POST 'http://localhost:8000/api/generate?project=com-minimal'
+make verify
 ```
 
-Stages the project to a tempdir, invokes the upstream `vendor/as`
-generators to produce `*_Cfg.{h,c}`, then `gcc -c -fsyntax-only`s
-each generated `.c` against the BSW headers in
-`vendor/as/infras/communication/`. Returns `{files, compileResult}`
-with all parsed diagnostics; the `pytest`
-`tests/test_gen_pipeline.py::test_compile_is_clean` asserts a clean
-build of `examples/com-minimal`.
+prints a per-level report and exits non-zero if any level fails.
+CI runs this on every push — see
+[`.github/workflows/verify.yml`](.github/workflows/verify.yml).
+
+### What these levels do NOT claim
+
+**OpenVinci is not production-, hardware-, or safety-certified.** Read
+this carefully:
+
+- L1 + L2 + L3 prove the configs OpenVinci produces are *valid input*
+  to the BSW source code in `vendor/as` and that a CAN simulator
+  routes frames. None of them prove the resulting code is correct
+  for any specific ECU, MCU, or AUTOSAR-conformance suite.
+- The host simulator (`vendor/as/app/platform/simulator/`) is a
+  **PC-side mock** of CAN hardware. Behaviour on a real Cortex-M /
+  PowerPC / TriCore target can and will differ — bit timing,
+  arbitration, mailbox allocation, interrupt latencies, real-time
+  scheduling assumptions, etc.
+- ISO 26262 / ASIL functional-safety claims, AUTOSAR conformance
+  certification, MISRA-C compliance audits — none of these are
+  exercised by these tests, and none are claimed by the project.
+- A successful L2 loopback says "frames move." It does not say "your
+  Dcm session-control state machine handles 0x10 03 correctly," "your
+  CanNm wake-up signalling is spec-conformant," or "your generated
+  E2E checksums match what the OEM expects." Higher-level
+  verification is on the user.
+- The upstream `autoas/as` BSW is itself a study project (see the
+  license note above). It is not a tier-1 supplier's
+  series-production AUTOSAR stack.
+
+Use OpenVinci to learn the AUTOSAR COM stack, to prototype
+configurations, to bring up host-PC simulations, and to drive
+DBC-derived integration tests. **Do not** deploy what it generates to
+a vehicle without an independent, certification-grade verification
+chain on top.
+
+## Docs
+
+- [`docs/DEMO.md`](docs/DEMO.md) — five-minute walkthrough.
+- [`docs/AUTOAS_NOTES.md`](docs/AUTOAS_NOTES.md) — verified facts
+  about the upstream config formats, generators, and host-sim build
+  chain. Every claim cites a file path inside `vendor/as`.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the four-layer
+  design (JSON Schema model, headless engine, generation adapter,
+  React UI).
+- [`CLAUDE.md`](CLAUDE.md) — repo conventions, all `make` targets,
+  and the gotchas you'd otherwise rediscover the hard way (system
+  `PYTHONPATH` from ROS leaking into the venv, `vendor/as`'s
+  hardcoded gitee mirrors, etc.).
+
+## API surface (backend)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | Liveness |
+| GET | `/schemas` | Bundle of Layer-1 JSON Schemas |
+| GET | `/schemas/{cls}` | One schema |
+| GET | `/api/projects` | List bundled example projects |
+| GET | `/api/projects/{name}` | Full project (every module) |
+| GET | `/api/config?project=&module=` | Single module file |
+| POST | `/api/validate` | Body: `{project}`; runs engine; returns issues + fixes |
+| POST | `/api/apply-fix` | Body: `{project, fix}`; applies one auto-fix; returns updated project + report |
+| GET | `/api/dbcs` | List bundled DBC files |
+| POST | `/api/import/dbc?dbc=&network=&me=` | DBC → fully wired project |
+| POST | `/api/generate` | Body: `{project, sourceProject?}`; stages → generates → compile-checks; returns files + diagnostics |
+
+## CLI
+
+```sh
+openvinci-import-dbc examples/dbc/sample.dbc --out /tmp/myproject \
+    --network CAN0 --me AS
+```
+
+Parses the DBC, auto-wires PduR/CanIf/Can, writes the four modeled
+module JSONs into `--out` using vendor/as's expected layout. See
+`docs/DEMO.md` for the full workflow.
+
+## License
+
+OpenVinci's own code is under the MIT License (see [`LICENSE`](LICENSE)
+when added). The vendored `autoas/as` submodule is **GPLv3 + commercial**
+by Parai Wang — see the "Upstream license note" above before commercial use.
