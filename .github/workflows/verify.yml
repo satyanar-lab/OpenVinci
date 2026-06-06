@@ -87,3 +87,67 @@ jobs:
           name: openvinci-verify-logs
           path: build/verify/
           if-no-files-found: ignore
+
+  # Separate job: proves the toolchain really travels with the image.
+  # The Docker build copies vendor/as straight from the context and
+  # bundles the gcc + generator pair the local `make verify` runs
+  # against. We then run L1 generate+compile INSIDE the container —
+  # the most representative single signal that the toolchain in the
+  # image works end-to-end. Failures here mean the Dockerfile drifted
+  # from the host build, not that the engine is broken.
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out OpenVinci (recursive submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+        # Same upstream qemu gap as above; fall through and init
+        # vendor/as explicitly.
+        continue-on-error: true
+
+      - name: Ensure vendor/as is initialized
+        run: |
+          if [ ! -d vendor/as/infras ]; then
+            git submodule update --init vendor/as
+          fi
+          test -d vendor/as/infras
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: openvinci:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run L1 generate+compile inside the image
+        # If the toolchain is missing, the wrong gcc is used, or
+        # vendor/as didn't make it into the layers, this step fails.
+        run: |
+          docker run --rm openvinci:ci \
+            pytest -q backend/tests/test_gen_pipeline.py
+
+      - name: Smoke-test the HTTP surface
+        # Start the container with the default entrypoint (uvicorn on
+        # 8000), poll /health, hit /api/projects, then stop. Proves the
+        # SPA-serving single-process flow works from a clean image.
+        run: |
+          docker run --rm -d --name openvinci-smoke \
+            -p 18000:8000 openvinci:ci
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18000/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18000/health
+          curl -sf http://127.0.0.1:18000/api/projects | grep -q '"projects"'
+          curl -sf http://127.0.0.1:18000/ | grep -qi '<!doctype html>'
+          docker stop openvinci-smoke

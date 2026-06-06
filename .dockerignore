@@ -1,0 +1,53 @@
+# Keep the build context small and reproducible. Anything excluded
+# here is NOT copied into the Docker image. Order: things you'd never
+# want in any image; then per-stack scratch; then big vendor/as bits
+# that aren't needed for the host-sim toolchain.
+
+# Repo-level scratch / state
+.git
+.gitignore
+.gitmodules
+.gitattributes
+.github
+.editorconfig
+.dockerignore
+Dockerfile
+docker-compose.yml
+**/.DS_Store
+**/*.swp
+**/*.log
+build/
+.openvinci/
+.claude/
+
+# Python
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+backend/.venv
+backend/.openvinci-pid
+
+# Node / front-end
+**/node_modules
+frontend/dist
+frontend/.openvinci-pid
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+
+# vendor/as: keep `infras` (BSW C sources gcc needs), `tools` (the
+# generator Python), `app/platform/simulator/src/config/Can_Cfg.c`,
+# `LICENSE`, `README.md`, the SCons files. Drop the heavy stuff the
+# host-sim toolchain doesn't need.
+vendor/as/.git
+vendor/as/build
+vendor/as/download
+vendor/as/doc
+vendor/as/.scons
+
+# Editors / OS
+.idea/
+.vscode/

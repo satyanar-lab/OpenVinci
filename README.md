@@ -67,6 +67,50 @@ For a scripted, headless version of that walkthrough, see
 scripts/demo.sh
 ```
 
+## Run in Docker (toolchain + submodule travel with the image)
+
+A multi-stage `Dockerfile` at the repo root produces a single image
+that bundles **the same gcc / generator / vendor/as combination** the
+local `make verify` runs against — so anyone with Docker can reproduce
+the L1 generate+compile chain without setting up Python, Node, or a
+build toolchain.
+
+Prerequisite: the `autoas/as` submodule must be initialised so its
+sources are part of the Docker build context. The Dockerfile copies
+straight from the context — no `git submodule` at image-build time
+(this is intentional so an offline build with a vendored tarball
+works the same way):
+
+```sh
+git submodule update --init vendor/as
+docker build -t openvinci .
+docker run --rm -p 8000:8000 openvinci   # then open http://localhost:8000
+```
+
+That gives you the same SPA + APIs the `make run` single-process
+flow does, on port 8000.
+
+### Verify the toolchain inside the container
+
+Prove the gcc + vendor/as pair really travels with the image, not
+just the binary:
+
+```sh
+# L1 generate+compile (gcc -c -fsyntax-only against vendor/as headers,
+# from the L1 verification level — the most representative single
+# check that the toolchain works end-to-end)
+docker run --rm openvinci pytest -q backend/tests/test_gen_pipeline.py
+
+# Or the full report:
+docker run --rm -e OPENVINCI_RUN_FUNCTIONAL=1 openvinci scripts/verify.sh
+```
+
+The container runs as a non-root user (`openvinci`, uid 1000), sets a
+no-coredump ulimit at entry, and caps the gcc subprocess at 30s
+(override with `-e OPENVINCI_GCC_TIMEOUT_S`). Body size on
+`/api/generate` is capped at 20 MB (override with
+`-e OPENVINCI_MAX_BODY_BYTES`).
+
 ## Repository layout
 
 ```
