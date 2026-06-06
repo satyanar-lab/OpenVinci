@@ -71,6 +71,13 @@ jobs:
           npm ci
 
       - name: Run verification (all levels)
+        # OPENVINCI_RUN_FUNCTIONAL=1 is the gate the L2 fixtures
+        # (broker + node) use. scripts/verify.sh also exports it
+        # per-pytest invocation, but we set it at the step level so
+        # the workflow file makes the opt-in visible without having
+        # to read the shell script.
+        env:
+          OPENVINCI_RUN_FUNCTIONAL: "1"
         run: scripts/verify.sh
 
       - name: Upload verification logs on failure
