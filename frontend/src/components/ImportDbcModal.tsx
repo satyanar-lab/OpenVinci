@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { FileUp, Upload } from "lucide-react";
 import { importDbc, importDbcUpload, listDbcs } from "../api";
 import type { DbcImportResponse } from "../types";
 import { Modal } from "./Modal";
@@ -68,7 +69,11 @@ export function ImportDbcModal({
   }
 
   return (
-    <Modal title="Import DBC" onClose={onClose}>
+    <Modal
+      title="Import DBC"
+      icon={<Upload size={14} aria-hidden />}
+      onClose={onClose}
+    >
       <p className="hint">
         Parse a CAN .dbc, map messages to Com IPDUs+signals, then auto-wire
         PduR / CanIf / Can. The current project is replaced.
@@ -106,11 +111,14 @@ export function ImportDbcModal({
         />
         {upload ? (
           <>
-            <strong>{upload.name}</strong>
-            <span className="dim">
-              {" "}
-              · {Math.round(upload.size / 102.4) / 10} KB
-            </span>
+            <FileUp size={20} aria-hidden className="dropzone-icon" />
+            <div className="dropzone-meta">
+              <strong>{upload.name}</strong>
+              <span className="dim">
+                {" "}
+                · {Math.round(upload.size / 102.4) / 10} KB
+              </span>
+            </div>
             <button
               className="link small"
               onClick={(e) => {
@@ -124,8 +132,11 @@ export function ImportDbcModal({
           </>
         ) : (
           <>
-            <strong>Drop a .dbc here</strong>
-            <span className="dim"> or click to browse</span>
+            <Upload size={24} aria-hidden className="dropzone-icon" />
+            <div className="dropzone-meta">
+              <strong>Drop a .dbc here</strong>
+              <span className="dim"> or click to browse</span>
+            </div>
           </>
         )}
       </div>

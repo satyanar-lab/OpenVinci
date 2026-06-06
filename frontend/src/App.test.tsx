@@ -252,9 +252,14 @@ describe("App", () => {
     await act(async () => {
       fireEvent.click(fixBtn);
     });
-    // After fix the validation reports ok; counts badge should show
+    // After fix the validation reports ok; the panel should switch
+    // to the success state (the literal "no issues" badge was renamed
+    // to "No problems — configuration valid" when the panel got the
+    // IDE pass; this is a deliberate selector update).
     await waitFor(() =>
-      expect(screen.getByText(/no issues/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/No problems — configuration valid/i),
+      ).toBeInTheDocument(),
     );
   });
 

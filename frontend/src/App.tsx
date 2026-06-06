@@ -20,6 +20,11 @@ import { Editor } from "./components/Editor";
 import { GenerateModal } from "./components/GenerateModal";
 import { ImportDbcModal } from "./components/ImportDbcModal";
 import { ProblemsPanel } from "./components/ProblemsPanel";
+import {
+  EditorSkeleton,
+  NoProjectEmpty,
+  TreeSkeleton,
+} from "./components/Skeleton";
 import { StatusBar } from "./components/StatusBar";
 import { Tree } from "./components/Tree";
 import type {
@@ -177,7 +182,7 @@ export function App() {
               rollup={issueRollup}
             />
           ) : (
-            <p className="hint">Loading…</p>
+            <TreeSkeleton />
           )}
         </aside>
         <section className="center">
@@ -189,8 +194,13 @@ export function App() {
               validation={validation}
               onChange={setProject}
             />
+          ) : schemas ? (
+            <NoProjectEmpty
+              onImport={() => setShowImport(true)}
+              hasProjects={projects.length > 0}
+            />
           ) : (
-            <p className="hint">Loading…</p>
+            <EditorSkeleton />
           )}
         </section>
       </div>
