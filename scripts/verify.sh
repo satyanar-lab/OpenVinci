@@ -27,7 +27,16 @@
 #                              Com_ReceiveSignal returns all 16 bytes
 #                              of an injected 0x201 frame byte-exact
 #                              (TestCanFdLoopback)
-#   6. golden                — regenerate, normalize timestamps,
+#   6. end-to-end CanTp      — segmented diagnostic transport against
+#      segmented (generated     examples/cantp-iso15765. Harness acts
+#      stack)                   as ISO-15765 peer: SF for a 5-byte SDU
+#                              and FF + (await FC from node) + 2× CF
+#                              for a 20-byte SDU. CanTp.c reassembles;
+#                              the Dcm sink prints byte-exact bytes via
+#                              Dcm_TpRxIndication. A third test asserts
+#                              that a CF SN discontinuity must NOT
+#                              produce a success log (TestCanTpLoopback)
+#   7. golden                — regenerate, normalize timestamps,
 #                              byte-diff against
 #                              tests/golden/<example>/expected/
 #
@@ -167,6 +176,19 @@ run_level "L2 end-to-end (generated stack)" "$LOG_DIR/l2-e2e.log" \
 run_level "L2 end-to-end CAN FD (generated stack)" "$LOG_DIR/l2-e2e-canfd.log" \
     env OPENVINCI_RUN_FUNCTIONAL=1 \
     "$PYTEST" "$ROOT/tests/functional/test_loopback.py::TestCanFdLoopback"
+
+# ---- L2 end-to-end CanTp segmented (generated stack) ----------------
+# The diagnostic-transport sister, run against examples/cantp-iso15765.
+# A 20-byte SDU is sent by the Python harness as ISO-15765 frames:
+# FF + 2× CF, with the node's CanTp.c sending the intermediate FC on
+# 0x7E8 (asserted). All segmentation lives in upstream CanTp.c — the
+# Dcm sink (node_tp_sink.c) only memcpys + prints what
+# Dcm_TpRxIndication(E_OK) hands it. A third test deliberately skips a
+# CF and asserts no success line appears: upstream sequence guards must
+# stay enforced.
+run_level "L2 end-to-end CanTp segmented (generated stack)" "$LOG_DIR/l2-e2e-cantp.log" \
+    env OPENVINCI_RUN_FUNCTIONAL=1 \
+    "$PYTEST" "$ROOT/tests/functional/test_loopback.py::TestCanTpLoopback"
 
 # ---- L3 golden -------------------------------------------------------
 run_level "L3 golden snapshot" "$LOG_DIR/l3-golden.log" \

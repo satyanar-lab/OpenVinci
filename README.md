@@ -98,13 +98,14 @@ Top-level conventions and per-layer notes live in [`CLAUDE.md`](CLAUDE.md).
 
 ## How generated files are verified
 
-OpenVinci ships six verification levels. Each one makes a *specific*
+OpenVinci ships seven verification levels. Each one makes a *specific*
 claim. Together they say: the configs OpenVinci emits are
 **structurally valid, syntactically + semantically valid C against the
 BSW headers, byte-stable across regenerations, transported byte-exact
 by the runtime simulator, and — when linked into a real node — route
-both classic Com signals AND FD-sized PDUs end-to-end through the
-generated CanIf→PduR→Com path.**
+classic Com signals, FD-sized PDUs, and ISO-15765 segmented diagnostic
+SDUs end-to-end through the generated CanIf→PduR→{Com, CanTp→Dcm}
+paths.**
 
 That is precisely what they say. It is **not** what they don't say —
 see the disclaimer below.
@@ -116,7 +117,8 @@ see the disclaimer below.
 | **L2 broker transport** | `make test-functional` (TestBrokerLoopback) | `vendor/as`'s `can_simulator` broker — the same TCP wire protocol the simulator-platform `Can.cpp` driver speaks at runtime — comes up, accepts clients, transports frames byte-exact between peers, and correctly suppresses sender echoes. The wire layer the rest of L2 sits on actually works. |
 | **L2 end-to-end (generated stack)** | `make test-functional` (TestComStackLoopback) | A real node binary is built by gcc-linking our generated `*_Cfg.c` (from `examples/com-minimal`) with the upstream Com / CanIf / PduR / Can MCAL sources plus the simulator Can driver. With that node running: (a) `Com_SendSignal(COM_SID_TxSignal, …)` on the generated config becomes a CAN frame at id `0x100` that the broker routes to a Python listener, and (b) a `0x101` frame the harness injects is decoded by the generated `CanIf → PduR_CanIfRxIndication → PduR_RxIndication → Com_RxIndication` path, and `Com_ReceiveSignal(COM_SID_RxSignal, …)` returns the exact byte the harness sent. The OpenVinci-emitted config wires real data through the upstream stack. |
 | **L2 end-to-end CAN FD (generated stack)** | `make test-functional` (TestCanFdLoopback) | Same chain, against `examples/canfd-minimal`: an FD-marked PDU (`fd: true`, `dlc: 16`) with a 16-byte `UINT8N` signal on each direction. With the FD node running: (a) `Com_SendSignal(COM_SID_TxFdSignal, …)` becomes a wire frame at id `0x200` whose dlc field equals **16** and whose 16 payload bytes equal the bytes the node Com-sent — anything narrower would silently pass the classic check. (b) The harness injects a known 16-byte payload at id `0x201`; the generated `CanIf → PduR_CanIfRxIndication → PduR_RxIndication → Com_RxIndication` path populates the FD Com IPDU, and `Com_ReceiveSignal(COM_SID_RxFdSignal, …)` returns **all 16 bytes** byte-exact. FD-sized PDU routing through the OpenVinci-emitted Com/CanIf/PduR config + upstream BSW is real, not stubbed. |
-| **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot, for both `com-minimal` and `canfd-minimal`. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
+| **L2 end-to-end CanTp segmented (generated stack)** | `make test-functional` (TestCanTpLoopback) | ISO-15765 segmented diagnostic transport against `examples/cantp-iso15765`. The node is built from a Com-less project (CanIf + PduR + CanTp + a Dcm upper-layer sink). The Python harness only speaks raw ISO-TP PCI frames at the CanIf RxPdu id `0x7e0`: (a) a 5-byte SDU is sent as a Single Frame and the sink logs `DcmRx[5]=<exact hex>` via `Dcm_TpRxIndication`. (b) A 20-byte SDU is sent as `FF` + (await `FC` from node on `0x7e8` — asserted) + 2× `CF` (SN=1, SN=2); the sink logs `DcmRx[20]=<exact 20 bytes>`. (c) Negative case: a deliberate CF sequence-number gap (SN=1, SN=3) must produce **no** success log — upstream CanTp's sequence guard (`CanTp.c:425-428`) stays enforced. Segmentation / reassembly is **only** in upstream `CanTp.c`; the sink does nothing but memcpy + print. |
+| **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot, for `com-minimal`, `canfd-minimal`, and `cantp-iso15765`. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
 
 Run them all:
 
@@ -145,17 +147,31 @@ this carefully:
 - ISO 26262 / ASIL functional-safety claims, AUTOSAR conformance
   certification, MISRA-C compliance audits — none of these are
   exercised by these tests, and none are claimed by the project.
-- A successful L2 end-to-end (classic + FD) says "for these configured
-  PDUs, on these configured signals, the generated CanIf→PduR→Com path
-  round-trips a single byte (classic, `examples/com-minimal`) and
-  a 16-byte UINT8N payload (FD, `examples/canfd-minimal`) through the
-  upstream BSW on a host simulator." It does not say "your Dcm
-  session-control state machine handles 0x10 03 correctly," "your
-  CanNm wake-up signalling is spec-conformant," or "your generated
-  E2E checksums match what the OEM expects." Higher layers (Dcm,
-  CanNm, SecOC, E2E, COM groups, signal gateways, …) are not exercised
-  — not yet linked, not yet verified. Multi-signal, multi-message, and
-  multi-network coverage past the two minimal fixtures is on the user.
+- A successful L2 end-to-end (classic + FD + CanTp) says "for these
+  configured PDUs, on these configured signals, the generated
+  CanIf→PduR→Com path round-trips a single byte (classic,
+  `examples/com-minimal`) and a 16-byte UINT8N payload (FD,
+  `examples/canfd-minimal`), and the generated CanIf→CanTp→PduR→Dcm
+  path round-trips a 20-byte segmented SDU
+  (CanTp, `examples/cantp-iso15765`), through the upstream BSW on a
+  host simulator." It does not say "your Dcm session-control state
+  machine handles 0x10 03 correctly," "your CanNm wake-up signalling
+  is spec-conformant," or "your generated E2E checksums match what
+  the OEM expects." Higher layers (real Dcm services, CanNm, SecOC,
+  E2E, COM groups, signal gateways, …) are not exercised — not yet
+  linked, not yet verified. Multi-signal, multi-message, and
+  multi-network coverage past the three minimal fixtures is on the
+  user.
+- **CanTp specifically.** L2 CanTp proves *segmented-SDU routing* on
+  a host simulator with the classic-CAN single-block-no-STmin
+  configuration we ship in `examples/cantp-iso15765`: SF for short
+  SDUs, FF + a single FC + CF train for longer ones. It does NOT
+  exercise: extended-addressing N_TA, FD-sized LL_DL (`LL_DL > 8`),
+  multi-block STmin pacing under load, wait-frame retry loops,
+  N_As/N_Bs/N_Cr timeout abort paths against a misbehaving peer, or
+  the Tx direction (`CanTp_Transmit` from the upper layer). The
+  schema (`model/cantp.schema.json`) already accepts these knobs;
+  proving them at L2 is future work.
 - **CAN FD specifically.** L2 FD proves *FD-sized PDU routing* on a
   host simulator (broker + simulator Can driver), not FD bit-rate
   switching (BRS), FD data-phase timing, or arbitration-phase /
