@@ -29,6 +29,14 @@ dev = [
     "httpx2>=2.3",
     "jsonschema>=4.21",
 ]
+# `pip install -e backend[desktop]` — for the `python -m desktop.app`
+# launcher. Held in a separate extra because pywebview pulls in a
+# native GUI backend (GTK on Linux, WebKit2GTK on most distros, Cocoa
+# on macOS, WebView2 on Windows) that headless server installs don't
+# need.
+desktop = [
+    "pywebview>=5",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

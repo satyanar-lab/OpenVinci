@@ -111,6 +111,37 @@ no-coredump ulimit at entry, and caps the gcc subprocess at 30s
 `/api/generate` is capped at 20 MB (override with
 `-e OPENVINCI_MAX_BODY_BYTES`).
 
+## Run as a desktop app
+
+OpenVinci can also run as a native desktop app — the same FastAPI
+backend that powers the hosted flow, with a [pywebview](https://pywebview.flowrl.com/)
+window pointing at it on a kernel-assigned free port. Single binary
+in spirit: double-click, work, close.
+
+```sh
+# one-time: install pywebview's optional extras
+pip install -e "backend[desktop]"
+
+# build the SPA bundle once (or whenever the UI changes)
+make build
+
+# launch — opens a native window titled "OpenVinci"
+make desktop                      # or: python -m desktop.app
+```
+
+Closing the window stops uvicorn and exits the process. If pywebview
+isn't installed (or its native backend isn't available), run with
+`--no-window` to print the local URL and use a regular browser:
+
+```sh
+python -m desktop.app --no-window
+# OpenVinci: ready at http://127.0.0.1:47473 (open in a browser …)
+```
+
+The pywebview backend differs per OS — GTK/Qt + WebKit2GTK on Linux,
+Cocoa on macOS, WebView2 on Windows. See pywebview's [install docs](https://pywebview.flowrl.com/guide/installation.html)
+if the window doesn't appear on your platform.
+
 ## Public deployment (Fly.io)
 
 The repo ships a ready-made [`fly.toml`](fly.toml) for

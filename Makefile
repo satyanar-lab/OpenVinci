@@ -16,7 +16,7 @@ PYENV := PYTHONPATH= PYTHONNOUSERSITE=1
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8000
 
-.PHONY: help check-submodule install install-backend install-frontend dev build run test test-backend test-frontend test-functional test-golden verify clean
+.PHONY: help check-submodule install install-backend install-frontend dev build run desktop test test-backend test-frontend test-functional test-golden verify clean
 
 # Hard guard for every target that needs vendor/as. A fresh clone without
 # the submodule used to let L1-gen / L2 / L3 silently skip or fail in
@@ -37,6 +37,7 @@ help:
 	@echo "  make dev             run backend + frontend separately (Vite on :5173, FastAPI on :8000)"
 	@echo "  make build           produce the production frontend bundle in frontend/dist"
 	@echo "  make run             build + serve everything on http://127.0.0.1:8000 (single process)"
+	@echo "  make desktop         build + launch as a desktop app (pywebview window)"
 	@echo "  make test            run pytest and vitest (unit tests)"
 	@echo "  make test-functional run the L2 functional loopback (slow, needs gcc)"
 	@echo "  make test-golden     run the L3 golden-file regression"
@@ -69,6 +70,13 @@ build:
 # end-users see and for any future deploy story.
 run: build
 	$(PYENV) $(UVICORN) --app-dir $(BACKEND) app.main:app --host $(BACKEND_HOST) --port $(BACKEND_PORT)
+
+# Desktop launcher: build the SPA, then open a pywebview native window
+# pointing at uvicorn on a free port. Requires `pip install -e
+# backend[desktop]` so pywebview is available — see README "Run as a
+# desktop app".
+desktop: build
+	$(PYENV) $(PY) -m desktop.app
 
 test: test-backend test-frontend
 
