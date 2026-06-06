@@ -52,9 +52,9 @@ export function App() {
   const [showImport, setShowImport] = useState<boolean>(false);
   const [showGenerate, setShowGenerate] = useState<boolean>(false);
   const [showVerification, setShowVerification] = useState<boolean>(false);
-  const [lastGenStatus, setLastGenStatus] = useState<"ok" | "errors" | null>(
-    null,
-  );
+  const [lastGenStatus, setLastGenStatus] = useState<
+    "ok" | "errors" | "unavailable" | null
+  >(null);
   const [theme, setTheme] = useState<Theme>("light");
   const [error, setError] = useState<string | null>(null);
 

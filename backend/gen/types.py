@@ -26,7 +26,15 @@ class CompileMessage:
 
 @dataclass
 class CompileResult:
-    status: Literal["ok", "errors"]
+    # "ok"          — every file compiled with zero errors.
+    # "errors"      — at least one gcc invocation reported an error.
+    # "unavailable" — gcc isn't on PATH, so verification was skipped.
+    #                 The desktop launcher and any clean-machine
+    #                 install MUST reach this state cleanly rather
+    #                 than throwing a 500: generation itself doesn't
+    #                 need the C toolchain — only this compile-check
+    #                 step does.
+    status: Literal["ok", "errors", "unavailable"]
     command: list[str]  # representative gcc command (with <FILE> placeholder)
     messages: list[CompileMessage] = field(default_factory=list)
 

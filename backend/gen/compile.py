@@ -18,10 +18,17 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 from .types import CompileMessage, CompileResult
+
+# Name of the C compiler on PATH. Honours `CC` like every other
+# Unix-y build does so callers (or the desktop launcher) can point at
+# a sibling toolchain without editing source.
+def _gcc_name() -> str:
+    return os.environ.get("CC") or "gcc"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_AS = REPO_ROOT / "vendor" / "as"
@@ -107,20 +114,37 @@ def include_dirs_for(staged_dir: Path) -> list[Path]:
 
 
 def compile_check(staged_dir: Path, c_files: list[Path]) -> CompileResult:
-    """Run gcc on each .c. Returns a CompileResult; status is `ok` iff
-    every file compiled with zero errors (warnings are reported but
-    do not change status)."""
+    """Run gcc on each .c. Returns a CompileResult.
+
+    Status is:
+      "ok"          — every file compiled with zero errors,
+      "errors"      — at least one error from gcc,
+      "unavailable" — no `gcc` (or `$CC`) on PATH; verification was
+                      skipped cleanly so generation itself still
+                      succeeds on clean-toolchain machines (the
+                      desktop launcher's whole point).
+
+    Generation NEVER needs the toolchain — only this function does.
+    """
     includes = include_dirs_for(Path(staged_dir))
     inc_flags: list[str] = []
     for d in includes:
         inc_flags.extend(["-I", str(d)])
+    cc = _gcc_name()
     base_cmd = [
-        "gcc",
+        cc,
         "-c",
         "-fsyntax-only",
         "-Wall",
         *inc_flags,
     ]
+    representative = [*base_cmd, "<FILE>"]
+
+    # Up-front toolchain detection — avoids spawning a subprocess just
+    # to discover the ENOENT, and lets us return the same shape whether
+    # there are zero generated .c files or many.
+    if shutil.which(cc) is None:
+        return _unavailable_result(cc, representative)
 
     messages: list[CompileMessage] = []
     any_error = False
@@ -132,6 +156,11 @@ def compile_check(staged_dir: Path, c_files: list[Path]) -> CompileResult:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout_s
             )
+        except FileNotFoundError:
+            # PATH changed between the up-front shutil.which() and this
+            # subprocess.run — same outcome, return "unavailable" so
+            # the caller surfaces a clean skip rather than a 500.
+            return _unavailable_result(cc, representative)
         except subprocess.TimeoutExpired:
             # Treat a timeout as a real compile error so the API caller
             # sees it in their report rather than getting a 500 or a
@@ -145,7 +174,7 @@ def compile_check(staged_dir: Path, c_files: list[Path]) -> CompileResult:
                     column=None,
                     severity="error",
                     message=(
-                        f"gcc timed out after {timeout_s:.0f}s — aborted. "
+                        f"{cc} timed out after {timeout_s:.0f}s — aborted. "
                         f"Set OPENVINCI_GCC_TIMEOUT_S to override."
                     ),
                 )
@@ -163,14 +192,42 @@ def compile_check(staged_dir: Path, c_files: list[Path]) -> CompileResult:
                         line=None,
                         column=None,
                         severity="error",
-                        message=f"gcc exited {proc.returncode} without a parseable error",
+                        message=f"{cc} exited {proc.returncode} without a parseable error",
                     )
                 )
 
     return CompileResult(
         status="errors" if any_error else "ok",
-        command=[*base_cmd, "<FILE>"],
+        command=representative,
         messages=messages,
+    )
+
+
+def _unavailable_result(cc: str, command: list[str]) -> CompileResult:
+    """Build the `status="unavailable"` skip result.
+
+    Single `note`-severity message so the UI build log can render it as
+    a hint rather than an error stripe. `command` is preserved (the
+    user can copy-paste the gcc invocation we WOULD have run, helpful
+    when wiring up a toolchain on a different machine).
+    """
+    return CompileResult(
+        status="unavailable",
+        command=command,
+        messages=[
+            CompileMessage(
+                file="<toolchain>",
+                line=None,
+                column=None,
+                severity="note",
+                message=(
+                    f"no C toolchain detected — `{cc}` not found on PATH; "
+                    "compile verification skipped. Generated files are still "
+                    "available for download or save-to-folder. Install gcc "
+                    "(or set $CC) to enable verification."
+                ),
+            )
+        ],
     )
 
 

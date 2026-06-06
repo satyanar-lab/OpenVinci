@@ -71,7 +71,12 @@ export type CompileMessage = {
 };
 
 export type CompileResult = {
-  status: "ok" | "errors";
+  // "ok"          — every file compiled clean.
+  // "errors"      — at least one gcc error.
+  // "unavailable" — no C toolchain on the host; verification was
+  //                 skipped. Generation still succeeded — used by
+  //                 the desktop launcher on a clean machine.
+  status: "ok" | "errors" | "unavailable";
   command: string[];
   messages: CompileMessage[];
 };

@@ -28,7 +28,7 @@ export function StatusBar({
   projectName: string | null;
   validation: ValidationReport | null;
   validating: boolean;
-  lastGenStatus: "ok" | "errors" | null;
+  lastGenStatus: "ok" | "errors" | "unavailable" | null;
   project: ProjectRaw | null;
   onClickProblems?: () => void;
   onShowVerification?: () => void;

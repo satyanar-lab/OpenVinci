@@ -6,6 +6,7 @@ import {
   FileCode,
   FolderOpen,
   Hammer,
+  Info,
   Loader,
   Play,
   Terminal,
@@ -16,7 +17,7 @@ import type { CompileMessage, GenerateResponse, ProjectRaw, Severity } from "../
 import { Modal } from "./Modal";
 import { unzipStored, type UnzipEntry } from "../unzipStored";
 
-type Phase = "running" | "ok" | "errors" | "failed";
+type Phase = "running" | "ok" | "errors" | "unavailable" | "failed";
 
 export function GenerateModal({
   project,
@@ -27,7 +28,7 @@ export function GenerateModal({
   project: ProjectRaw;
   sourceProject: string | undefined;
   onClose: () => void;
-  onComplete?: (status: "ok" | "errors") => void;
+  onComplete?: (status: "ok" | "errors" | "unavailable") => void;
 }) {
   const [busy, setBusy] = useState<boolean>(true);
   const [result, setResult] = useState<GenerateResponse | null>(null);
@@ -38,7 +39,11 @@ export function GenerateModal({
       .then((r) => {
         setResult(r);
         const status = r.compileResult?.status;
-        if (status === "ok" || status === "errors") {
+        if (
+          status === "ok" ||
+          status === "errors" ||
+          status === "unavailable"
+        ) {
           onComplete?.(status);
         }
       })
@@ -57,7 +62,9 @@ export function GenerateModal({
         ? "ok"
         : cr?.status === "errors"
           ? "errors"
-          : "ok";
+          : cr?.status === "unavailable"
+            ? "unavailable"
+            : "ok";
 
   const errorCount = cr?.messages.filter((m) => m.severity === "error").length ?? 0;
   const warningCount =
@@ -71,11 +78,20 @@ export function GenerateModal({
     >
       <BuildBanner phase={phase} errorCount={errorCount} warningCount={warningCount} />
 
-      <p className="hint">
-        Stages the project to a workdir, runs the upstream generators, then
-        <code> gcc -c -fsyntax-only</code> every <code>*_Cfg.c</code> against
-        <code> vendor/as</code>'s BSW headers.
-      </p>
+      {phase !== "unavailable" ? (
+        <p className="hint">
+          Stages the project to a workdir, runs the upstream generators, then
+          <code> gcc -c -fsyntax-only</code> every <code>*_Cfg.c</code> against
+          <code> vendor/as</code>'s BSW headers.
+        </p>
+      ) : (
+        <p className="hint">
+          Generation succeeded — the upstream generators wrote the files
+          below. No C toolchain (<code>gcc</code>) was found on this host,
+          so the <code>gcc -c -fsyntax-only</code> verification step was
+          skipped. The files are still available to download.
+        </p>
+      )}
 
       {error && (
         <pre className="error">{error}</pre>
@@ -303,6 +319,13 @@ function BuildBanner({
       label: "compile errors",
       tone: "errors",
     },
+    unavailable: {
+      // Generation SUCCEEDED — only verification was skipped. Render
+      // this in info-blue so the user doesn't read it as a failure.
+      icon: <Info size={14} aria-hidden />,
+      label: "verification unavailable",
+      tone: "unavailable",
+    },
     failed: {
       icon: <CircleAlert size={14} aria-hidden />,
       label: "generate failed",
@@ -330,6 +353,11 @@ function BuildBanner({
         {phase === "ok" && (
           <span className="badge ok">
             <Check size={11} aria-hidden /> no diagnostics
+          </span>
+        )}
+        {phase === "unavailable" && (
+          <span className="badge info">
+            <Info size={11} aria-hidden /> no C toolchain on host
           </span>
         )}
       </span>
