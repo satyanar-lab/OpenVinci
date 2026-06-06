@@ -11,20 +11,11 @@ TCP CAN bus protocol with three node-like clients:
 
 Set `OPENVINCI_RUN_FUNCTIONAL=1` to enable; otherwise the tests skip.
 
-What this test does not (yet) do: link the full COM stack into a
-node binary and verify Com_RxIndication callbacks fire. That requires
-either:
-  (a) building upstream's CanApp via scons — blocked by hardcoded
-      gitee mirrors for mbedtls / libtomcrypt / lua that aren't
-      reachable from the build environment, or
-  (b) a custom minimal node linking Com.c + CanIf.c + PduR.c + the
-      simulator Can.cpp manually — possible but requires resolving
-      the Os/EcuM/Mcu init surface that upstream's simulator.c
-      bundles together.
-
-When a deeper L2 fixture (`node_binary`) can be built, the second
-test class below switches on; until then it skips with a clear
-explanation.
+TestComStackLoopback closes the deep L2 gap: the node_binary fixture
+links our generated `*_Cfg.c` with Com.c + CanIf.c + PduR.c + mcal
+Can.c and the simulator Can driver (path (b) above). Init sequence and
+MainFunction pumping mirror what `vendor/as/app/app/main.c` does for
+the relevant layers. See `tests/functional/node/node_main.c`.
 """
 
 from __future__ import annotations
@@ -43,6 +34,30 @@ from .conftest import (
     decode_frame,
     encode_frame,
 )
+
+
+def _wait_for_node_ready(log_path: Path, *, timeout: float) -> None:
+    """The node's main.c writes 'openvinci-node: ... up.' to stderr
+    after pumping the stack long enough for the simulator Can driver
+    to land its TCP socket on the broker. Block until we see it."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if log_path.is_file() and "up." in log_path.read_text():
+            return
+        time.sleep(0.05)
+    raise RuntimeError(
+        f"node did not report 'up.' within {timeout}s:\n"
+        + (log_path.read_text() if log_path.is_file() else "(no log)")
+    )
+
+
+def _wait_for_log_contains(log_path: Path, needle: str, *, timeout: float) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if log_path.is_file() and needle in log_path.read_text():
+            return
+        time.sleep(0.05)
+    # Caller will assert and surface the log content.
 
 
 # --- baseline: broker + raw socket clients ----------------------------
@@ -110,38 +125,26 @@ class TestBrokerLoopback:
 # --- end-to-end with a COM-stack-linked node --------------------------
 
 
-@pytest.fixture(scope="session")
-def node_binary(opt_in):  # noqa: ARG001
-    """Build a minimal COM-stack node that uses our generated configs.
-
-    Skipped until the link-time surface for Com.c + CanIf.c + PduR.c
-    + simulator Can.cpp is stable in this environment. The harness
-    below is ready to receive it — see comments at the top of this
-    module for the path that would land the build.
-    """
-    pytest.skip(
-        "minimal COM-stack node build is a stretch goal; the broker-level "
-        "loopback above already exercises the simulator's wire protocol "
-        "with byte-exact fidelity."
-    )
-
-
 class TestComStackLoopback:
-    """When `node_binary` is available, prove a Com_SendSignal call
-    on one side becomes a frame on the wire that the broker routes to
-    a receiver. Currently skipped — see node_binary fixture."""
+    """End-to-end through the real COM stack with our generated config.
+
+    The node_binary fixture (conftest.py) stages examples/com-minimal,
+    runs the upstream generators against it, then gcc-links the
+    resulting *_Cfg.c with Com / CanIf / PduR / mcal-Can and the
+    simulator Can driver. The two tests below drive its two CLI modes."""
 
     def test_node_transmits_periodic_tx_message(
         self, broker, node_binary: Path, free_can_port: int
     ):
-        log = (cf.BUILD_DIR / f"node-{free_can_port}.log").open("w")
+        log_path = cf.BUILD_DIR / f"node-{free_can_port}.log"
+        log = log_path.open("w")
         node = subprocess.Popen(
             [str(node_binary), "--bus", str(free_can_port)],
             stdout=log,
             stderr=subprocess.STDOUT,
         )
         try:
-            time.sleep(0.5)
+            _wait_for_node_ready(log_path, timeout=5.0)
             listener = connect_node(free_can_port)
             listener.settimeout(3.0)
             # com-minimal's TX_MSG has CycleTime=1000 and id=0x100; the
@@ -160,22 +163,26 @@ class TestComStackLoopback:
     def test_node_receives_injected_frame_and_logs_signal(
         self, broker, node_binary: Path, free_can_port: int
     ):
-        log = (cf.BUILD_DIR / f"node-rx-{free_can_port}.log").open("w")
+        log_path = cf.BUILD_DIR / f"node-rx-{free_can_port}.log"
+        log = log_path.open("w")
         node = subprocess.Popen(
             [str(node_binary), "--bus", str(free_can_port), "--probe"],
             stdout=log,
             stderr=subprocess.STDOUT,
         )
         try:
-            time.sleep(0.5)
+            _wait_for_node_ready(log_path, timeout=5.0)
             tester = connect_node(free_can_port)
-            time.sleep(0.2)
+            # Broker registers new sockets via select(); give it a
+            # round-trip to land the tester before injecting.
+            time.sleep(0.4)
             # com-minimal's RX_MSG id is 0x101; payload[0] should land
             # in the RxSignal slot.
             tester.send(encode_frame(0x101, b"\x42" + b"\x00" * 7))
+            # Keep the tester connection open while polling so the broker
+            # doesn't tear it down before the frame is forwarded.
+            _wait_for_log_contains(log_path, "RxSignal=0x42", timeout=3.0)
             tester.close()
-            # Give the node's main loop time to call Com_MainFunction_Rx.
-            time.sleep(0.5)
         finally:
             node.terminate()
             try:
@@ -183,7 +190,7 @@ class TestComStackLoopback:
             except subprocess.TimeoutExpired:
                 node.kill()
             log.close()
-        log_text = (cf.BUILD_DIR / f"node-rx-{free_can_port}.log").read_text()
+        log_text = log_path.read_text()
         assert "RxSignal=0x42" in log_text, (
             "node did not log the expected Rx signal value:\n" + log_text
         )

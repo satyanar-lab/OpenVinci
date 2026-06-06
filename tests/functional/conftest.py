@@ -37,6 +37,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_AS = REPO_ROOT / "vendor" / "as"
 BUILD_DIR = REPO_ROOT / "build" / "functional"
 BROKER_BIN = BUILD_DIR / "can_simulator"
+NODE_BIN = BUILD_DIR / "openvinci_node"
+NODE_GEN_DIR = BUILD_DIR / "com-minimal"
+NODE_SRC_DIR = Path(__file__).parent / "node"
 
 
 def _functional_enabled() -> bool:
@@ -99,6 +102,157 @@ def broker_binary(opt_in) -> Path:  # noqa: ARG001 (opt_in is a gate)
             + proc.stderr
         )
     return BROKER_BIN
+
+
+# --- node (real COM-stack-linked) -------------------------------------
+
+# Upstream BSW sources we link. The Com / CanIf / PduR / mcal-Can files
+# are the production stack; the simulator Can driver + canlib + the
+# TCP simulator backend give us the wire layer that talks to the
+# broker; std_timer + std_bit + mempool + critical + Log/PAL are the
+# infrastructure those modules pull in. We intentionally don't link
+# Dcm / NM / Xcp / SecOC — com-minimal doesn't reference them and
+# they'd pull crypto / lua we can't fetch.
+_NODE_C_SRC_REL: tuple[str, ...] = (
+    "infras/communication/Com/Com.c",
+    "infras/communication/CanIf/CanIf.c",
+    "infras/communication/PduR/PduR.c",
+    "infras/communication/PduR/PduR_Com.c",
+    "infras/communication/PduR/PduR_CanIf.c",
+    "infras/mcal/Can/Can.c",
+    "infras/libraries/stdbit/src/std_bit.c",
+    "infras/libraries/mempool/mempool.c",
+    "infras/system/timer/std_timer.c",
+    "infras/communication/TcpIp/TcpIp.c",
+    "infras/communication/TcpIp/config/TcpIp_Cfg.c",
+    "app/platform/simulator/src/config/Can_Cfg.c",
+)
+_NODE_CPP_SRC_REL: tuple[str, ...] = (
+    "app/platform/simulator/src/Can.cpp",
+    "app/platform/simulator/src/critical.cpp",
+    "tools/libraries/Can/src/canlib.cpp",
+    "tools/libraries/Can/src/simulator_can.cpp",
+    "tools/libraries/Can/src/simulator_can_v2.cpp",
+    "tools/libraries/Can/src/qemu_serial_vcan.cpp",
+    "tools/libraries/utils/src/Log.cpp",
+    "tools/libraries/utils/src/PAL.cpp",
+)
+_NODE_INCLUDE_REL: tuple[str, ...] = (
+    "infras/include",
+    "infras/mcal/Can",
+    "infras/communication/Com",
+    "infras/communication/CanIf",
+    "infras/communication/PduR",
+    "infras/communication/E2E",
+    "infras/communication/TcpIp",
+    "infras/libraries/stdbit/src",
+    "infras/libraries/mempool",
+    "tools/libraries/Can/include",
+    "tools/libraries/Can/src",
+    "tools/libraries/utils/include",
+    "app/platform/simulator/src/config",
+)
+
+
+@pytest.fixture(scope="session")
+def node_binary(opt_in, broker_binary) -> Path:  # noqa: ARG001 (opt_in is a gate)
+    """Build the minimal COM-stack node from examples/com-minimal.
+
+    Stages the example, runs the upstream generators in-process, then
+    gcc-links the result with Com.c / CanIf.c / PduR.c / mcal-Can.c
+    and the simulator Can driver + canlib. The binary supports the
+    two CLI modes the tests already exercise (`--bus N`, `--probe`).
+    """
+    if NODE_BIN.is_file() and _node_inputs_unchanged():
+        return NODE_BIN
+
+    NODE_GEN_DIR.mkdir(parents=True, exist_ok=True)
+    _stage_and_generate_com_minimal()
+    gen_dir = NODE_GEN_DIR / "config" / "Com" / "GEN"
+
+    sources_c = [VENDOR_AS / rel for rel in _NODE_C_SRC_REL] + [
+        gen_dir / "Com_Cfg.c",
+        gen_dir / "CanIf_Cfg.c",
+        gen_dir / "PduR_Cfg.c",
+        NODE_SRC_DIR / "node_main.c",
+        NODE_SRC_DIR / "node_glue.c",
+    ]
+    sources_cpp = [VENDOR_AS / rel for rel in _NODE_CPP_SRC_REL]
+    for src in sources_c + sources_cpp:
+        if not src.is_file():
+            pytest.skip(f"missing source: {src}")
+
+    cmd: list[str] = [
+        "g++",
+        "-O0",
+        "-g",
+        "-DPATH_MAX=4096",
+        "-DUSE_STD_PRINTF",
+        "-DUSE_CAN",
+        "-DUSE_CANIF",
+        "-DUSE_COM",
+        "-DUSE_PDUR",
+    ]
+    for rel in _NODE_INCLUDE_REL:
+        cmd.append(f"-I{VENDOR_AS / rel}")
+    cmd.append(f"-I{gen_dir}")
+    for src in sources_c:
+        cmd += ["-x", "c", str(src)]
+    for src in sources_cpp:
+        cmd += ["-x", "c++", str(src)]
+    cmd += ["-lpthread", "-luuid", "-o", str(NODE_BIN)]
+
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        log = BUILD_DIR / "node-build.log"
+        log.write_text(proc.stdout + proc.stderr)
+        pytest.skip(
+            f"node build failed (see {log.relative_to(REPO_ROOT)}):\n"
+            + proc.stderr[-2000:]
+        )
+    return NODE_BIN
+
+
+def _stage_and_generate_com_minimal() -> None:
+    """Copy examples/com-minimal into the build dir and run the upstream
+    generators against it — same path the L1 gen pipeline uses, just
+    rooted at build/functional/com-minimal so we can re-link without
+    touching the example tree."""
+    src = REPO_ROOT / "examples" / "com-minimal"
+    dst = NODE_GEN_DIR
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+    cfgs = [
+        str(dst / "config" / "Com" / "Com.json"),
+        str(dst / "config" / "Com" / "CanIf.json"),
+        str(dst / "config" / "Com" / "PduR.json"),
+    ]
+    tools = str(VENDOR_AS / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import generator  # type: ignore[import-not-found]
+
+    saved_root = generator.RootDir
+    generator.RootDir = str(dst)
+    try:
+        generator.Generate(cfgs, force=True)
+    finally:
+        generator.RootDir = saved_root
+
+
+def _node_inputs_unchanged() -> bool:
+    """Tiny cache: skip the rebuild if node_main.c + node_glue.c haven't
+    changed since the binary was produced. Saves ~5 s on repeat runs."""
+    inputs = [
+        NODE_SRC_DIR / "node_main.c",
+        NODE_SRC_DIR / "node_glue.c",
+    ]
+    if not all(p.is_file() for p in inputs):
+        return False
+    bin_mtime = NODE_BIN.stat().st_mtime
+    return all(p.stat().st_mtime <= bin_mtime for p in inputs)
 
 
 @pytest.fixture
