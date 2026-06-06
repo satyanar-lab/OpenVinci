@@ -1,0 +1,12 @@
+{
+  "class": "CanTp",
+  "channels": [
+    {
+      "name": "ISO_TP",
+      "LL_DL": 8,
+      "BS": 0,
+      "STmin": 0,
+      "padding": "0xCC"
+    }
+  ]
+}

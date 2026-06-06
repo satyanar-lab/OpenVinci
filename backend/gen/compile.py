@@ -77,6 +77,14 @@ def include_dirs_for(staged_dir: Path) -> list[Path]:
     for gen in sorted(staged_dir.rglob("GEN")):
         if gen.is_dir():
             base.append(gen)
+    # Per-example include/ directory for tiny vendored shims (e.g.
+    # cantp-iso15765 ships an empty Dcm_Cfg.h so the upstream PduR
+    # generator's `#include "Dcm_Cfg.h"` resolves without us pulling
+    # in the full vendor/as Dcm config tree). Convention: anything
+    # named `include` inside an example tree is added to -I.
+    for inc in sorted(staged_dir.rglob("include")):
+        if inc.is_dir():
+            base.append(inc)
     return base
 
 

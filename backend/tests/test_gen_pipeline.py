@@ -17,6 +17,7 @@ from gen import GENERATABLE_CLASSES, generate_and_compile
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COM_MINIMAL = REPO_ROOT / "examples" / "com-minimal"
 CANFD_MINIMAL = REPO_ROOT / "examples" / "canfd-minimal"
+CANTP_ISO15765 = REPO_ROOT / "examples" / "cantp-iso15765"
 
 
 @pytest.fixture(scope="module")
@@ -31,6 +32,13 @@ def fd_gen_result(tmp_path_factory):
     workdir = tmp_path_factory.mktemp("openvinci-canfd-minimal")
     project = load_project(CANFD_MINIMAL)
     return generate_and_compile(project, workdir, source_dir=CANFD_MINIMAL)
+
+
+@pytest.fixture(scope="module")
+def cantp_gen_result(tmp_path_factory):
+    workdir = tmp_path_factory.mktemp("openvinci-cantp-iso15765")
+    project = load_project(CANTP_ISO15765)
+    return generate_and_compile(project, workdir, source_dir=CANTP_ISO15765)
 
 
 def test_compile_is_clean(gen_result):
@@ -99,6 +107,27 @@ def test_canfd_minimal_compiles_clean(fd_gen_result):
     )
     paths = {f.path for f in fd_gen_result.files}
     for stem in ("Com_Cfg.c", "CanIf_Cfg.c", "PduR_Cfg.c"):
+        assert any(p.endswith(stem) for p in paths), f"missing {stem}"
+
+
+def test_cantp_iso15765_compiles_clean(cantp_gen_result):
+    """Third minimal fixture: CanTp + CanIf + PduR routes wired to a
+    `Dcm` upper layer. Proves the generated CanTp_Cfg.{h,c} and
+    PduR_Cfg.c compile against the BSW headers with our tiny per-
+    example `include/Dcm_Cfg.h` shim picked up via
+    `include_dirs_for` (backend/gen/compile.py). No Com module is
+    configured — this is the diagnostic-transport-only shape."""
+    cr = cantp_gen_result.compile_result
+    assert cr is not None
+    assert cr.status == "ok", (
+        "cantp-iso15765 compile failed:\n"
+        + "\n".join(
+            f"  {m.severity.upper()} {m.file}:{m.line}: {m.message}"
+            for m in cr.messages
+        )
+    )
+    paths = {f.path for f in cantp_gen_result.files}
+    for stem in ("CanTp_Cfg.c", "CanIf_Cfg.c", "PduR_Cfg.c"):
         assert any(p.endswith(stem) for p in paths), f"missing {stem}"
 
 

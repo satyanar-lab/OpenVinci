@@ -1,0 +1,7 @@
+{
+  "class": "PduR",
+  "routines": [
+    { "name": "ISO_TP_RX", "from": "CanTp", "to": "Dcm" },
+    { "name": "ISO_TP_TX", "from": "Dcm", "to": "CanTp" }
+  ]
+}
