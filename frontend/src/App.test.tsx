@@ -207,6 +207,16 @@ describe("App", () => {
             project: sampleProject,
             validation: validationOk,
           }),
+        "/api/dbcs": () =>
+          jsonResponse({ dbcs: ["examples/dbc/sample.dbc"] }),
+        "/api/import/dbc/upload": () =>
+          jsonResponse({
+            source: "uploaded.dbc",
+            network: "CAN0",
+            me: "AS",
+            project: sampleProject,
+            validation: validationOk,
+          }),
       }),
     );
   });
@@ -255,5 +265,48 @@ describe("App", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /Import DBC/i }));
     expect(screen.getByRole("dialog", { name: /Import DBC/i })).toBeInTheDocument();
+  });
+
+  it("Import DBC modal renders a drop zone", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Com")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Import DBC/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("dbc-dropzone")).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/drop a \.dbc here/i)).toBeInTheDocument();
+  });
+
+  it("accepting a dropped .dbc file enables the Import button", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Com")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Import DBC/i }));
+    const dropzone = await screen.findByTestId("dbc-dropzone");
+    const file = new File(["VERSION \"\""], "test.dbc", {
+      type: "application/octet-stream",
+    });
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file] },
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/test\.dbc/)).toBeInTheDocument(),
+    );
+    const importBtn = screen.getByRole("button", { name: /^Import$/ });
+    expect(importBtn).not.toBeDisabled();
+  });
+
+  it("rejects non-.dbc drops with an error message", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Com")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Import DBC/i }));
+    const dropzone = await screen.findByTestId("dbc-dropzone");
+    fireEvent.drop(dropzone, {
+      dataTransfer: {
+        files: [new File(["{}"], "schema.json", { type: "application/json" })],
+      },
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/not a \.dbc file/i)).toBeInTheDocument(),
+    );
   });
 });

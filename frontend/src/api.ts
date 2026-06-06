@@ -82,6 +82,27 @@ export async function importDbc(
   );
 }
 
+export async function importDbcUpload(
+  file: File,
+  network: string,
+  me: string,
+  baudrate = 500000,
+): Promise<DbcImportResponse> {
+  const params = new URLSearchParams({
+    network,
+    me,
+    baudrate: String(baudrate),
+  });
+  const body = new FormData();
+  body.append("file", file, file.name);
+  return jsonOrThrow(
+    await fetch(`/api/import/dbc/upload?${params}`, {
+      method: "POST",
+      body,
+    }),
+  );
+}
+
 export async function generate(
   project: ProjectRaw,
   sourceProject?: string,
