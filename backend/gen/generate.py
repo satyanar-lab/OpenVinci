@@ -11,6 +11,7 @@ strictly read-only — see CLAUDE.md).
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,26 @@ from engine.project import CLASS_TO_PATH
 GENERATABLE_CLASSES: tuple[str, ...] = ("Com", "CanIf", "PduR", "CanTp")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VENDOR_AS_TOOLS = REPO_ROOT / "vendor" / "as" / "tools"
+
+
+def _vendor_as_tools() -> Path:
+    """Resolve vendor/as/tools (the upstream generator package).
+
+    Honours `OPENVINCI_VENDOR_AS` so a PyInstaller bundle can point at
+    the extracted copy without code edits — the desktop launcher sets
+    the env var when frozen. Default for the source tree is
+    `REPO_ROOT/vendor/as/tools`.
+    """
+    base = os.environ.get("OPENVINCI_VENDOR_AS")
+    if base:
+        return Path(base) / "tools"
+    return REPO_ROOT / "vendor" / "as" / "tools"
+
+
+# Back-compat constant (computed once at import); the helpers below
+# call `_vendor_as_tools()` so env-var overrides applied after import
+# still take effect.
+VENDOR_AS_TOOLS = _vendor_as_tools()
 
 
 def run_generators(staged_dir: Path) -> list[Path]:
@@ -61,6 +81,6 @@ def run_generators(staged_dir: Path) -> list[Path]:
 
 
 def _ensure_vendor_tools_on_path() -> None:
-    tools = str(VENDOR_AS_TOOLS)
+    tools = str(_vendor_as_tools())
     if tools not in sys.path:
         sys.path.insert(0, tools)

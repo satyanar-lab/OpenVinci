@@ -310,7 +310,11 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         dbc_path = Path(dbc)
         if not dbc_path.is_absolute():
-            dbc_path = REPO_ROOT / dbc_path
+            # Anchor relative paths at the bundle's examples parent so
+            # the UI's "examples/dbc/foo.dbc" form (returned by
+            # /api/dbcs) resolves identically in source mode AND in a
+            # frozen PyInstaller bundle where REPO_ROOT is meaningless.
+            dbc_path = _examples_dir().parent / dbc_path
         if not dbc_path.is_file():
             raise HTTPException(status_code=404, detail=f"dbc not found: {dbc}")
         project = import_dbc_file(
@@ -318,7 +322,7 @@ def create_app() -> FastAPI:
         )
         report = validate(project)
         try:
-            source = str(dbc_path.relative_to(REPO_ROOT))
+            source = str(dbc_path.relative_to(_examples_dir().parent))
         except ValueError:
             source = str(dbc_path)
         return {
@@ -387,12 +391,25 @@ def create_app() -> FastAPI:
 
     @app.get("/api/dbcs")
     def list_dbcs() -> dict[str, Any]:
-        """Bundled DBC files the UI can offer as import sources."""
-        root = REPO_ROOT / "examples" / "dbc"
+        """Bundled DBC files the UI can offer as import sources.
+
+        Reads from the bundle's examples/dbc tree (or the source one,
+        when running from the repo) so the desktop / PyInstaller flow
+        finds the same files the hosted flow does.
+        """
+        examples = _examples_dir()
+        root = examples / "dbc"
         files: list[str] = []
         if root.is_dir():
             for p in sorted(root.rglob("*.dbc")):
-                files.append(str(p.relative_to(REPO_ROOT)))
+                # Paths shown to the UI stay relative to the examples
+                # parent — same shape ("examples/dbc/foo.dbc") whether
+                # we're in source or bundle mode.
+                try:
+                    rel = p.relative_to(examples.parent)
+                except ValueError:
+                    rel = p
+                files.append(str(rel))
         return {"dbcs": files}
 
     # --- generate -----------------------------------------------------

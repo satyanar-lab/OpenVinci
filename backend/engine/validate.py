@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +15,20 @@ from .project import Project
 from .rules import RULES
 from .types import Issue, Location, Severity, ValidationReport
 
+# Source-tree default for the JSON-schemas directory. A PyInstaller
+# bundle (or any sandboxed install) can override via
+# OPENVINCI_SCHEMAS_DIR — the desktop launcher sets it when frozen
+# (see desktop/app.py::_set_bundle_paths). The Path constant stays so
+# legacy callers that import MODEL_DIR keep working in source mode.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODEL_DIR = REPO_ROOT / "model"
+
+
+def _model_dir() -> Path:
+    raw = os.environ.get("OPENVINCI_SCHEMAS_DIR")
+    return Path(raw) if raw else REPO_ROOT / "model"
+
+
+MODEL_DIR = _model_dir()
 
 SCHEMA_FILES: dict[str, str] = {
     "Can": "can.schema.json",
@@ -27,7 +40,7 @@ SCHEMA_FILES: dict[str, str] = {
 
 
 def _registry() -> Registry:
-    shared = json.loads((MODEL_DIR / "shared" / "types.schema.json").read_text())
+    shared = json.loads((_model_dir() / "shared" / "types.schema.json").read_text())
     resource = Resource(contents=shared, specification=DRAFT202012)
     return Registry().with_resource(uri=shared["$id"], resource=resource)
 
@@ -36,7 +49,7 @@ _REGISTRY = _registry()
 
 
 def _schema(cls: str) -> dict[str, Any]:
-    return json.loads((MODEL_DIR / SCHEMA_FILES[cls]).read_text())
+    return json.loads((_model_dir() / SCHEMA_FILES[cls]).read_text())
 
 
 def _validate_against_schema(cls: str, raw: dict[str, Any]) -> list[Issue]:

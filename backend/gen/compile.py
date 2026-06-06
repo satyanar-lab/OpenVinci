@@ -31,7 +31,24 @@ def _gcc_name() -> str:
     return os.environ.get("CC") or "gcc"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VENDOR_AS = REPO_ROOT / "vendor" / "as"
+
+
+def _vendor_as() -> Path:
+    """Resolve the vendor/as root.
+
+    Honours `OPENVINCI_VENDOR_AS` so a PyInstaller bundle can point at
+    the extracted _MEIPASS copy (the desktop launcher sets this when
+    `sys.frozen` is true). Default for the source tree is
+    `REPO_ROOT/vendor/as`.
+    """
+    raw = os.environ.get("OPENVINCI_VENDOR_AS")
+    return Path(raw) if raw else REPO_ROOT / "vendor" / "as"
+
+
+# Kept as a constant for backwards compatibility with anything that
+# imported it directly; computed lazily in include_dirs_for() so a
+# test (or the desktop bundle) can override the env var late.
+VENDOR_AS = _vendor_as()
 
 # Hard ceiling per gcc invocation. The L1 syntax-only checks complete
 # in well under a second locally; 30 s is comfortably above realistic
@@ -88,13 +105,14 @@ _GCC_DIAG_RE = re.compile(
 
 def include_dirs_for(staged_dir: Path) -> list[Path]:
     """Every -I path we need to compile a generated file."""
-    base: list[Path] = [VENDOR_AS / "infras" / "include"]
+    vendor_as = _vendor_as()
+    base: list[Path] = [vendor_as / "infras" / "include"]
     for sub in _COMMUNICATION_SUBDIRS:
-        d = VENDOR_AS / "infras" / "communication" / sub
+        d = vendor_as / "infras" / "communication" / sub
         if d.is_dir():
             base.append(d)
     for sub in _DIAGNOSTIC_SUBDIRS:
-        d = VENDOR_AS / "infras" / "diagnostic" / sub
+        d = vendor_as / "infras" / "diagnostic" / sub
         if d.is_dir():
             base.append(d)
     # Every GEN dir inside the staged project — generated _Cfg.h files

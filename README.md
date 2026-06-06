@@ -142,6 +142,42 @@ The pywebview backend differs per OS — GTK/Qt + WebKit2GTK on Linux,
 Cocoa on macOS, WebView2 on Windows. See pywebview's [install docs](https://pywebview.flowrl.com/guide/installation.html)
 if the window doesn't appear on your platform.
 
+### Build a double-click bundle (PyInstaller)
+
+`make desktop-app` produces a single executable that anyone on the
+same OS can run without installing Python, Node, or pip. The bundle
+embeds:
+
+- the FastAPI backend + every Python dep,
+- the built SPA (`frontend/dist/`),
+- the autoas/as generator tooling (`vendor/as/tools/`),
+- the BSW header tree (`vendor/as/infras/`),
+- bundled example projects and the DBC fixture set,
+- the JSON schema model.
+
+```sh
+git submodule update --init vendor/as
+make desktop-app           # bundle into dist/OpenVinci (~27 MB on Linux)
+./dist/OpenVinci           # opens the window
+./dist/OpenVinci --no-window   # headless smoke-test, prints the URL
+```
+
+What's in scope, honestly:
+
+- **Generation is fully bundled.** Importing a DBC and generating a
+  skeleton works on any clean machine with no extra installs — no
+  Python, no Node, no gcc. Verified end-to-end (the launcher boots,
+  the SPA serves, `/api/import/dbc` parses a bundled DBC, and
+  `/api/generate` writes `*_Cfg.{h,c}` to a tempdir).
+- **Per-OS build.** PyInstaller does not cross-compile. Build the
+  Linux ELF on Linux, the macOS `.app` on macOS, and the Windows
+  `.exe` on Windows. CI doesn't ship a release matrix yet.
+- **Compile-verify is optional.** The L1 `gcc -fsyntax-only` check
+  only activates if `gcc` is on the user's PATH. Without it, the UI
+  shows "verification unavailable — no C toolchain" (info blue) and
+  generation still succeeds. See `backend/gen/compile.py` for the
+  graceful-degrade contract.
+
 ## Public deployment (Fly.io)
 
 The repo ships a ready-made [`fly.toml`](fly.toml) for

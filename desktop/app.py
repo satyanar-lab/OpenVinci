@@ -37,6 +37,42 @@ FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 log = logging.getLogger("openvinci.desktop")
 
 
+def is_frozen() -> bool:
+    """True iff we're running inside a PyInstaller (or similar)
+    bundle. Both `sys.frozen` and `sys._MEIPASS` are present in that
+    case; checking both keeps a non-PyInstaller `frozen=True` shim
+    (e.g. cx_Freeze) from confusing the path math below."""
+    return bool(getattr(sys, "frozen", False)) and hasattr(sys, "_MEIPASS")
+
+
+def _bundle_root() -> Path:
+    """Bundle data root — either _MEIPASS (frozen) or the source tree.
+
+    Resources the backend reads at runtime (frontend/dist, examples,
+    model schemas, vendor/as) are laid out the same way inside the
+    bundle as on disk, so the rest of the code stays
+    bundle-mode-agnostic. The env-var hooks just need to point at
+    THIS directory.
+    """
+    if is_frozen():
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return REPO_ROOT
+
+
+def _set_bundle_paths() -> None:
+    """When frozen, point the backend at the bundle's extracted data
+    dirs by setting the OPENVINCI_* env vars BEFORE `app.main` is
+    imported. Idempotent: existing env vars win so a user can still
+    override e.g. OPENVINCI_EXAMPLES_DIR for testing."""
+    if not is_frozen():
+        return
+    bundle = _bundle_root()
+    os.environ.setdefault("OPENVINCI_FRONTEND_DIST", str(bundle / "frontend" / "dist"))
+    os.environ.setdefault("OPENVINCI_EXAMPLES_DIR", str(bundle / "examples"))
+    os.environ.setdefault("OPENVINCI_SCHEMAS_DIR", str(bundle / "model"))
+    os.environ.setdefault("OPENVINCI_VENDOR_AS", str(bundle / "vendor" / "as"))
+
+
 def find_free_port(host: str = "127.0.0.1") -> int:
     """Ask the kernel for any free TCP port. Race-y in principle —
     another process could grab the port between this call and uvicorn
@@ -190,10 +226,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Re-point the backend at the bundle's data dirs BEFORE
+    # `start_server` triggers `from app.main import app` — the SPA
+    # catch-all, schemas, examples and vendor/as paths all become
+    # _MEIPASS-relative when frozen. In source mode this is a no-op.
+    _set_bundle_paths()
+
     # Sanity: the SPA catch-all expects frontend/dist/index.html.
     # Bail loudly if it's missing — no friendly 503 dance in desktop
-    # mode where the user clearly meant to see the UI.
-    index_html = FRONTEND_DIST / "index.html"
+    # mode where the user clearly meant to see the UI. Honours the
+    # OPENVINCI_FRONTEND_DIST env override the line above just set.
+    frontend_dist = Path(
+        os.environ.get("OPENVINCI_FRONTEND_DIST", str(FRONTEND_DIST))
+    )
+    index_html = frontend_dist / "index.html"
     if not index_html.is_file():
         print(
             f"frontend bundle missing at {index_html}\n"

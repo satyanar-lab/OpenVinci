@@ -16,7 +16,7 @@ PYENV := PYTHONPATH= PYTHONNOUSERSITE=1
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8000
 
-.PHONY: help check-submodule install install-backend install-frontend dev build run desktop test test-backend test-frontend test-functional test-golden verify clean
+.PHONY: help check-submodule install install-backend install-frontend dev build run desktop desktop-app test test-backend test-frontend test-functional test-golden verify clean
 
 # Hard guard for every target that needs vendor/as. A fresh clone without
 # the submodule used to let L1-gen / L2 / L3 silently skip or fail in
@@ -38,6 +38,7 @@ help:
 	@echo "  make build           produce the production frontend bundle in frontend/dist"
 	@echo "  make run             build + serve everything on http://127.0.0.1:8000 (single process)"
 	@echo "  make desktop         build + launch as a desktop app (pywebview window)"
+	@echo "  make desktop-app     bundle into a single double-click artifact (PyInstaller)"
 	@echo "  make test            run pytest and vitest (unit tests)"
 	@echo "  make test-functional run the L2 functional loopback (slow, needs gcc)"
 	@echo "  make test-golden     run the L3 golden-file regression"
@@ -77,6 +78,25 @@ run: build
 # desktop app".
 desktop: build
 	$(PYENV) $(PY) -m desktop.app
+
+# Single double-click artifact via PyInstaller. Builds the SPA first
+# so the dist/ tree is current, then bakes the launcher + the backend
+# + vendor/as/{tools,infras} + frontend/dist + examples + model into
+# one OS-native binary at dist/OpenVinci. PER-OS BUILD: run this on
+# the target platform you want to ship for (cross-compiling Python
+# bundles is not a thing). See README "Build a double-click bundle".
+desktop-app: build
+	@$(PYENV) $(PY) -c "import PyInstaller" 2>/dev/null \
+		|| { echo "==> installing pyinstaller into the backend venv"; \
+		     $(PIP) install --quiet "pyinstaller>=6"; }
+	@$(PYENV) $(PY) -c "import webview" 2>/dev/null \
+		|| { echo "==> installing pywebview into the backend venv"; \
+		     $(PIP) install --quiet "pywebview>=5"; }
+	$(PYENV) $(VENV)/bin/pyinstaller --noconfirm --clean desktop.spec
+	@echo ""
+	@echo "Bundle written to: $(ROOT)/dist/OpenVinci"
+	@echo "Run it: ./dist/OpenVinci          (windowed)"
+	@echo "        ./dist/OpenVinci --no-window   (headless smoke-test)"
 
 test: test-backend test-frontend
 
