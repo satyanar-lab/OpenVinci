@@ -1,5 +1,14 @@
-import { Check, CircleAlert, Hammer, Network, Sigma, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  CircleAlert,
+  Hammer,
+  Network,
+  ShieldCheck,
+  Sigma,
+  TriangleAlert,
+} from "lucide-react";
 import type { ProjectRaw, ValidationReport } from "../types";
+import { VERIFICATION_LEVELS } from "../verification";
 
 /**
  * Bottom status bar — the IDE signature this UI was missing.
@@ -14,6 +23,7 @@ export function StatusBar({
   lastGenStatus,
   project,
   onClickProblems,
+  onShowVerification,
 }: {
   projectName: string | null;
   validation: ValidationReport | null;
@@ -21,6 +31,7 @@ export function StatusBar({
   lastGenStatus: "ok" | "errors" | null;
   project: ProjectRaw | null;
   onClickProblems?: () => void;
+  onShowVerification?: () => void;
 }) {
   const errors = validation?.errorCount ?? 0;
   const warnings = validation?.warningCount ?? 0;
@@ -67,6 +78,24 @@ export function StatusBar({
         <span className="lbl">nets</span>
         <span className="val">{networkCount}</span>
       </span>
+
+      {/* Verification identity — a platform-level claim, not a project
+       *  fact. The label reads "verified · 7/7" because every level
+       *  passes in CI on every push; clicking opens the verification
+       *  panel that breaks down what each one actually proves. */}
+      <button
+        type="button"
+        className="seg clickable verify-seg"
+        onClick={onShowVerification}
+        title={`OpenVinci ships ${VERIFICATION_LEVELS.length} CI-verified levels — click for details`}
+        aria-label="Open verification panel"
+      >
+        <ShieldCheck size={12} aria-hidden />
+        <span className="lbl">verified</span>
+        <span className="val">
+          {VERIFICATION_LEVELS.length}/{VERIFICATION_LEVELS.length}
+        </span>
+      </button>
     </footer>
   );
 }

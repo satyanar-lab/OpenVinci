@@ -136,6 +136,24 @@
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-lg: 14px;
+
+  /* Motion — kept short so the UI feels responsive, not animated.
+   * Anything ≤150ms reads as direct manipulation; longer feels like
+   * a marketing flourish. Honour prefers-reduced-motion below. */
+  --t-fast: 80ms;
+  --t-base: 120ms;
+  --t-slow: 150ms;
+  --t-curve: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-base: 0ms;
+    --t-slow: 0ms;
+  }
+  .spin { animation: none; }
+  .skeleton-bar { animation: none; }
 }
 
 /* === Reset / base =================================================== */
@@ -171,13 +189,19 @@ button {
   align-items: center;
   gap: 6px;
   line-height: 18px;
+  transition:
+    background-color var(--t-base) var(--t-curve),
+    border-color var(--t-base) var(--t-curve),
+    color var(--t-base) var(--t-curve);
 }
 button:hover {
   background: var(--bg-sunken);
+  border-color: var(--border-strong);
 }
 button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
+  border-color: var(--accent);
 }
 button.primary {
   background: var(--accent);
@@ -224,6 +248,10 @@ textarea {
   color: var(--fg);
   min-width: 180px;
   line-height: 18px;
+  transition:
+    border-color var(--t-base) var(--t-curve),
+    box-shadow var(--t-base) var(--t-curve),
+    background-color var(--t-base) var(--t-curve);
 }
 input:focus-visible,
 select:focus-visible,
@@ -231,6 +259,16 @@ textarea:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -1px;
   border-color: var(--accent);
+}
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+a:focus-visible,
+[role="treeitem"] > .tree-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+  border-radius: var(--radius-2);
 }
 
 code,
@@ -392,9 +430,13 @@ pre,
   height: var(--row-h);
   cursor: default;
   user-select: none;
+  transition: background-color var(--t-fast) var(--t-curve);
 }
 .tree-row:hover {
   background: var(--bg-sunken);
+}
+.tree-row:focus {
+  outline: none;
 }
 .tree-row.selected {
   background: var(--bg-selected);
@@ -716,6 +758,10 @@ pre,
   border: 1px solid var(--border);
   border-radius: 11px;
   cursor: pointer;
+  transition:
+    background-color var(--t-base) var(--t-curve),
+    color var(--t-base) var(--t-curve),
+    border-color var(--t-base) var(--t-curve);
 }
 .chip:hover {
   background: var(--bg-sunken);
@@ -930,12 +976,25 @@ pre,
   gap: 4px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-2);
+  transition: background-color var(--t-fast) var(--t-curve);
 }
 .statusbar .seg.clickable {
   cursor: pointer;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  height: 100%;
 }
 .statusbar .seg.clickable:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+.statusbar .seg.clickable:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: -2px;
+}
+.statusbar .verify-seg {
+  margin-left: var(--space-2);
 }
 .statusbar .seg .lbl {
   opacity: 0.86;
@@ -1387,4 +1446,93 @@ ul.diag li.severity-warning {
   padding: var(--space-2);
   color: var(--fg-dim);
   font-size: var(--fs-sm);
+}
+
+/* ===== Verification panel =========================================== */
+.verify-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.verify-row {
+  display: grid;
+  grid-template-columns: 28px 36px 1fr;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  transition: border-color var(--t-base) var(--t-curve);
+}
+.verify-row:hover {
+  border-color: var(--border-strong);
+}
+.verify-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--sev-ok-bg);
+  color: var(--sev-ok);
+  border: 1px solid var(--sev-ok-line);
+  margin-top: 1px;
+}
+.verify-cat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  padding: 1px 6px;
+  border-radius: var(--radius-2);
+  margin-top: 1px;
+}
+.verify-cat.cat-l1 { background: var(--sev-info-bg); color: var(--sev-info); }
+.verify-cat.cat-l2 { background: var(--bg-selected); color: var(--accent); }
+.verify-cat.cat-l3 { background: var(--sev-ok-bg); color: var(--sev-ok); }
+.verify-body {
+  min-width: 0;
+}
+.verify-title {
+  margin: 0 0 4px 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+.verify-claim {
+  margin: 0 0 4px 0;
+  font-size: var(--fs-sm);
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+.verify-target {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  background: var(--bg-sunken);
+  padding: 1px 6px;
+  border-radius: var(--radius-1);
+}
+.verify-disclaimer {
+  font-size: var(--fs-xs);
+  border-left: 2px solid var(--border);
+  padding-left: var(--space-2);
+  color: var(--fg-dim);
+}
+.verify-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  text-decoration: none;
+  color: var(--accent);
+}
+.verify-link:hover {
+  text-decoration: underline;
 }

@@ -27,6 +27,7 @@ import {
 } from "./components/Skeleton";
 import { StatusBar } from "./components/StatusBar";
 import { Tree } from "./components/Tree";
+import { VerificationPanel } from "./components/VerificationPanel";
 import type {
   Issue,
   ProjectRaw,
@@ -50,6 +51,7 @@ export function App() {
   const [validating, setValidating] = useState<boolean>(false);
   const [showImport, setShowImport] = useState<boolean>(false);
   const [showGenerate, setShowGenerate] = useState<boolean>(false);
+  const [showVerification, setShowVerification] = useState<boolean>(false);
   const [lastGenStatus, setLastGenStatus] = useState<"ok" | "errors" | null>(
     null,
   );
@@ -218,6 +220,7 @@ export function App() {
         validating={validating}
         lastGenStatus={lastGenStatus}
         project={project}
+        onShowVerification={() => setShowVerification(true)}
       />
 
       {showImport && (
@@ -241,6 +244,10 @@ export function App() {
           onClose={() => setShowGenerate(false)}
           onComplete={(status) => setLastGenStatus(status)}
         />
+      )}
+
+      {showVerification && (
+        <VerificationPanel onClose={() => setShowVerification(false)} />
       )}
     </div>
   );

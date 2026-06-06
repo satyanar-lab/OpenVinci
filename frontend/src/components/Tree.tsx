@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import {
   Box,
   ChevronDown,
@@ -10,6 +10,7 @@ import {
   Layers,
   TriangleAlert,
 } from "lucide-react";
+import { findNodeById } from "../treeModel";
 import type { TreeNode, TreeNodeKind } from "../types";
 import { rollupAt, type IssueRollup } from "../validationRollup";
 
@@ -28,14 +29,107 @@ export function Tree({
    *  validation hasn't completed yet. */
   rollup?: Map<string, IssueRollup>;
 }) {
+  const containerRef = useRef<HTMLUListElement>(null);
+  // Roving-tabindex anchor. The row whose id matches gets tabIndex=0;
+  // every other row is -1 so Shift+Tab leaves the tree in one hop
+  // instead of stepping through every row.
+  const [focusAnchor, setFocusAnchor] = useState<string | null>(null);
+  const tabAnchor = focusAnchor ?? selectedId ?? nodes[0]?.id ?? null;
+
+  function onKeyDown(e: KeyboardEvent<HTMLUListElement>) {
+    const root = containerRef.current;
+    if (!root) return;
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) return;
+    if (!root.contains(active)) return;
+
+    const rows = Array.from(
+      root.querySelectorAll<HTMLElement>(".tree-row[data-tree-id]"),
+    );
+    const idx = rows.indexOf(active);
+    if (idx === -1) return;
+
+    const move = (next: number) => {
+      const target = rows[next];
+      if (!target) return;
+      const id = target.dataset.treeId ?? null;
+      if (id) setFocusAnchor(id);
+      target.focus();
+      e.preventDefault();
+    };
+
+    const li = active.closest("li");
+    const hasChildren = li?.getAttribute("aria-expanded") !== null;
+    const isExpanded = li?.getAttribute("aria-expanded") === "true";
+
+    switch (e.key) {
+      case "ArrowDown":
+        move(idx + 1);
+        return;
+      case "ArrowUp":
+        move(idx - 1);
+        return;
+      case "Home":
+        move(0);
+        return;
+      case "End":
+        move(rows.length - 1);
+        return;
+      case "Enter":
+      case " ": {
+        const id = active.dataset.treeId;
+        if (id) {
+          const node = findNodeById(nodes, id);
+          if (node) onSelect(node);
+        }
+        e.preventDefault();
+        return;
+      }
+      case "ArrowRight":
+        if (hasChildren && !isExpanded) {
+          const twisty = active.querySelector<HTMLElement>(".tree-twisty");
+          twisty?.click();
+          e.preventDefault();
+        } else {
+          move(idx + 1);
+        }
+        return;
+      case "ArrowLeft":
+        if (hasChildren && isExpanded) {
+          const twisty = active.querySelector<HTMLElement>(".tree-twisty");
+          twisty?.click();
+          e.preventDefault();
+        } else {
+          // Move focus to the parent treeitem.
+          const parentLi = li?.parentElement?.closest("li[role='treeitem']");
+          const parentRow = parentLi?.querySelector<HTMLElement>(".tree-row");
+          if (parentRow) {
+            const id = parentRow.dataset.treeId ?? null;
+            if (id) setFocusAnchor(id);
+            parentRow.focus();
+            e.preventDefault();
+          }
+        }
+        return;
+    }
+  }
+
   return (
-    <ul className="tree" role="tree">
+    <ul
+      ref={containerRef}
+      className="tree"
+      role="tree"
+      aria-label="project model"
+      onKeyDown={onKeyDown}
+    >
       {nodes.map((n) => (
         <TreeItem
           key={n.id}
           node={n}
           selectedId={selectedId}
+          tabAnchorId={tabAnchor}
           onSelect={onSelect}
+          onFocusRow={setFocusAnchor}
           depth={0}
           rollup={rollup}
         />
@@ -47,13 +141,17 @@ export function Tree({
 function TreeItem({
   node,
   selectedId,
+  tabAnchorId,
   onSelect,
+  onFocusRow,
   depth,
   rollup,
 }: {
   node: TreeNode;
   selectedId: string | null;
+  tabAnchorId: string | null;
   onSelect: (n: TreeNode) => void;
+  onFocusRow: (id: string) => void;
   depth: number;
   rollup?: Map<string, IssueRollup>;
 }) {
@@ -61,12 +159,19 @@ function TreeItem({
   const [open, setOpen] = useState<boolean>(depth < 1);
   const selected = selectedId === node.id;
   const sev = rollup ? rollupAt(rollup, node.id) : undefined;
+  const isAnchor = node.id === tabAnchorId;
 
   return (
     <li role="treeitem" aria-expanded={hasChildren ? open : undefined}>
       <div
         className={`tree-row${selected ? " selected" : ""}`}
         style={{ paddingLeft: 6 + depth * ROW_INDENT }}
+        data-tree-id={node.id}
+        tabIndex={isAnchor ? 0 : -1}
+        role="presentation"
+        onFocus={() => onFocusRow(node.id)}
+        onClick={() => onSelect(node)}
+        aria-selected={selected || undefined}
       >
         {/* Indentation guide rails — one vertical 1px line per depth. */}
         {Array.from({ length: depth }, (_, i) => (
@@ -79,7 +184,10 @@ function TreeItem({
         ))}
         <span
           className="tree-twisty"
-          onClick={() => hasChildren && setOpen(!open)}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hasChildren) setOpen(!open);
+          }}
           aria-hidden
         >
           {hasChildren ? (
@@ -94,7 +202,6 @@ function TreeItem({
         </span>
         <span
           className={`tree-label kind-${node.kind}`}
-          onClick={() => onSelect(node)}
           title={node.id}
         >
           <KindIcon kind={node.kind} open={open} />
@@ -111,7 +218,9 @@ function TreeItem({
               key={c.id}
               node={c}
               selectedId={selectedId}
+              tabAnchorId={tabAnchorId}
               onSelect={onSelect}
+              onFocusRow={onFocusRow}
               depth={depth + 1}
               rollup={rollup}
             />
@@ -134,8 +243,6 @@ function KindIcon({ kind, open }: { kind: TreeNodeKind; open: boolean }) {
         <Folder size={size} className="kind-icon container" aria-hidden />
       );
     case "item":
-      // Pick a slightly different mark for items so e.g. a "controller" and
-      // a "PDU" don't look like containers — they're parameter records.
       return <Box size={size} className="kind-icon item" aria-hidden />;
     default:
       return <FileCode size={size} aria-hidden />;
@@ -143,11 +250,6 @@ function KindIcon({ kind, open }: { kind: TreeNodeKind; open: boolean }) {
 }
 
 function SeverityBadge({ sev }: { sev: IssueRollup }) {
-  // Errors win when both present (an error already implies "open me"); a
-  // warning-only count gets the amber marker. `self*` distinguishes "I
-  // am the problem" from "a descendant is" — when only descendants are
-  // affected we still mark, but the title hints at the difference so
-  // the user knows to keep drilling.
   const isSelf = sev.selfErrors > 0 || sev.selfWarnings > 0;
   if (sev.errors > 0) {
     return (
