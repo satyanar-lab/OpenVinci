@@ -116,6 +116,40 @@ export async function generate(
   );
 }
 
+/**
+ * Pull the generated outputs of the same project as a STORED .zip
+ * blob. Same stage+generate the regular `generate()` already runs;
+ * the backend cleans the temp workdir after streaming. The arcnames
+ * inside the zip are project-relative, never server filesystem
+ * paths.
+ */
+export async function generateZip(
+  project: ProjectRaw,
+  sourceProject?: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch("/api/generate/zip", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ project, sourceProject }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  }
+  const filename = extractFilename(
+    response.headers.get("content-disposition"),
+  ) ?? "openvinci.zip";
+  return { blob: await response.blob(), filename };
+}
+
+function extractFilename(disposition: string | null): string | null {
+  if (!disposition) return null;
+  // Accept both quoted and unquoted forms — content-disposition is
+  // notoriously variable. We never need RFC 5987 (UTF-8) variants
+  // because the backend constrains the label to [A-Za-z0-9._-].
+  const m = /filename\s*=\s*"?([^"]+)"?/i.exec(disposition);
+  return m ? m[1] : null;
+}
+
 export function issueKey(issue: Issue): string {
   return `${issue.rule}|${issue.module}|${issue.path.join(".")}|${issue.message}`;
 }

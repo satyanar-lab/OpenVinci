@@ -1072,9 +1072,25 @@ pre,
 .modal-footer {
   display: flex;
   gap: 6px;
+  align-items: center;
   justify-content: flex-end;
   padding: 8px var(--space-3);
   border-top: 1px solid var(--border);
+}
+.modal-footer > .download-actions {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.modal-footer .download-actions .hint.small {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--sev-ok);
+}
+.modal-footer .download-actions .download-error {
+  color: var(--sev-error);
 }
 .modal .form {
   width: 100%;

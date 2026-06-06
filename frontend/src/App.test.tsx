@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { buildTree, findNodeById } from "./treeModel";
 import { schemaAt } from "./schemaWalk";
+import { unzipStored } from "./unzipStored";
 
 // Minimal schemas (subset) — exercise resolve + walk without dragging
 // the full Layer-1 schemas into the test bundle.
@@ -155,6 +156,75 @@ function jsonResponse(body: unknown): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+// jsdom's Blob lacks both arrayBuffer() and stream() in older
+// releases, which breaks the Response() polyfill we'd otherwise use.
+// Roll our own via FileReader. Real browsers ship arrayBuffer
+// natively; this only affects unit-test scaffolding.
+if (typeof Blob.prototype.arrayBuffer !== "function") {
+  (Blob.prototype as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
+    function () {
+      const blob = this as Blob;
+      return new Promise<ArrayBuffer>((resolve, reject) => {
+        const r = new FileReader();
+        r.onerror = () => reject(r.error);
+        r.onload = () => resolve(r.result as ArrayBuffer);
+        r.readAsArrayBuffer(blob);
+      });
+    };
+}
+
+describe("unzipStored", () => {
+  // Hand-built two-entry STORED zip — same encoding as Python's
+  // zipfile.ZIP_STORED that the backend emits. Validates the inline
+  // parser's local-file-header walk + name/data extraction.
+  function makeStoredZip(): Blob {
+    const enc = new TextEncoder();
+    const entries = [
+      { name: "GEN/a.txt", data: enc.encode("hello\n") },
+      { name: "GEN/sub/b.txt", data: enc.encode("world") },
+    ];
+
+    const chunks: Uint8Array[] = [];
+    for (const e of entries) {
+      const nameBytes = enc.encode(e.name);
+      const lfh = new Uint8Array(30);
+      const dv = new DataView(lfh.buffer);
+      dv.setUint32(0, 0x04034b50, true);  // signature
+      dv.setUint16(4, 20, true);            // version needed
+      dv.setUint16(6, 0, true);             // gp flag
+      dv.setUint16(8, 0, true);             // method = STORED
+      dv.setUint32(14, 0, true);            // crc (test doesn't check)
+      dv.setUint32(18, e.data.length, true);// compressed size
+      dv.setUint32(22, e.data.length, true);// uncompressed size
+      dv.setUint16(26, nameBytes.length, true);
+      dv.setUint16(28, 0, true);            // extra len
+      chunks.push(lfh, nameBytes, e.data);
+    }
+    // Trailing bytes (a stray Central Directory signature) — the
+    // parser should stop cleanly at the first non-LFH signature.
+    const cd = new Uint8Array(4);
+    new DataView(cd.buffer).setUint32(0, 0x02014b50, true);
+    chunks.push(cd);
+
+    const total = chunks.reduce((acc, c) => acc + c.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) {
+      out.set(c, off);
+      off += c.length;
+    }
+    return new Blob([out], { type: "application/zip" });
+  }
+
+  it("parses STORED entries and preserves their paths", async () => {
+    const entries = await unzipStored(makeStoredZip());
+    expect(entries.map((e) => e.path)).toEqual(["GEN/a.txt", "GEN/sub/b.txt"]);
+    const dec = new TextDecoder();
+    expect(dec.decode(entries[0].content)).toBe("hello\n");
+    expect(dec.decode(entries[1].content)).toBe("world");
+  });
+});
 
 describe("schemaWalk", () => {
   it("descends through properties and items", () => {

@@ -2,16 +2,19 @@ import { useEffect, useState } from "react";
 import {
   Check,
   CircleAlert,
+  Download,
   FileCode,
+  FolderOpen,
   Hammer,
   Loader,
   Play,
   Terminal,
   TriangleAlert,
 } from "lucide-react";
-import { generate } from "../api";
+import { generate, generateZip } from "../api";
 import type { CompileMessage, GenerateResponse, ProjectRaw, Severity } from "../types";
 import { Modal } from "./Modal";
+import { unzipStored, type UnzipEntry } from "../unzipStored";
 
 type Phase = "running" | "ok" | "errors" | "failed";
 
@@ -87,12 +90,190 @@ export function GenerateModal({
       )}
 
       <div className="modal-footer">
+        <DownloadActions
+          project={project}
+          sourceProject={sourceProject}
+          result={result}
+          phase={phase}
+        />
         <button onClick={onClose} className="primary">
           Close
         </button>
       </div>
     </Modal>
   );
+}
+
+// --- Download / save-to-folder actions --------------------------------
+
+type SavePhase = "idle" | "downloading" | "saving" | "done" | "error";
+
+function DownloadActions({
+  project,
+  sourceProject,
+  result,
+  phase,
+}: {
+  project: ProjectRaw;
+  sourceProject: string | undefined;
+  result: GenerateResponse | null;
+  phase: Phase;
+}) {
+  const [save, setSave] = useState<SavePhase>("idle");
+  const [savedFolder, setSavedFolder] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Don't offer retrieval when generation never produced files. Compile
+  // errors with non-empty files (a partial build the user may still
+  // want) are fine — that's what "errors" phase means.
+  const hideForFailure = phase === "running" || phase === "failed";
+  const noFiles = !result || result.files.length === 0;
+  if (hideForFailure || noFiles) return null;
+
+  const hasDirPicker =
+    typeof window !== "undefined" &&
+    typeof (window as unknown as { showDirectoryPicker?: unknown })
+      .showDirectoryPicker === "function";
+
+  async function onDownload() {
+    setSave("downloading");
+    setSaveError(null);
+    try {
+      const { blob, filename } = await generateZip(project, sourceProject);
+      triggerBrowserDownload(blob, filename);
+      setSave("done");
+    } catch (e) {
+      setSave("error");
+      setSaveError((e as Error).message);
+    }
+  }
+
+  async function onSaveToFolder() {
+    setSave("saving");
+    setSaveError(null);
+    setSavedFolder(null);
+    try {
+      // `as unknown as` because the File System Access API types ship
+      // under @types/wicg-file-system-access — not in our deps. The
+      // call is guarded by the hasDirPicker check above.
+      const w = window as unknown as {
+        showDirectoryPicker: (opts?: {
+          mode?: "read" | "readwrite";
+        }) => Promise<DirectoryHandle>;
+      };
+      const dirHandle = await w.showDirectoryPicker({ mode: "readwrite" });
+      const { blob } = await generateZip(project, sourceProject);
+      const entries = await unzipStored(blob);
+      await writeEntriesToDirectory(dirHandle, entries);
+      setSavedFolder(dirHandle.name);
+      setSave("done");
+    } catch (e) {
+      // AbortError = user cancelled the picker — silently reset.
+      if ((e as { name?: string })?.name === "AbortError") {
+        setSave("idle");
+        return;
+      }
+      setSave("error");
+      setSaveError((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="download-actions">
+      {save === "done" && savedFolder && (
+        <span className="hint small">
+          <Check size={11} aria-hidden /> wrote to <code>{savedFolder}</code>
+        </span>
+      )}
+      {save === "done" && !savedFolder && (
+        <span className="hint small">
+          <Check size={11} aria-hidden /> download started
+        </span>
+      )}
+      {save === "error" && saveError && (
+        <span className="hint small download-error" title={saveError}>
+          <CircleAlert size={11} aria-hidden /> {saveError.slice(0, 64)}
+        </span>
+      )}
+      {hasDirPicker && (
+        <button
+          type="button"
+          onClick={onSaveToFolder}
+          disabled={save === "saving" || save === "downloading"}
+          title="Pick a folder and write the generated files individually"
+        >
+          <FolderOpen size={14} aria-hidden />
+          <span className="lbl">
+            {save === "saving" ? "Saving…" : "Save to folder…"}
+          </span>
+        </button>
+      )}
+      <button
+        type="button"
+        className="primary"
+        onClick={onDownload}
+        disabled={save === "downloading" || save === "saving"}
+        title="Download a .zip containing every generated file"
+      >
+        <Download size={14} aria-hidden />
+        <span className="lbl">
+          {save === "downloading" ? "Preparing…" : "Download .zip"}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function triggerBrowserDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  // Defer revoke + remove so Firefox has a chance to start the
+  // download. 0 ms tick is enough — the click is synchronous here.
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
+// File System Access API — only the bits we actually call. Avoids
+// pulling @types/wicg-file-system-access into the dev deps.
+type DirectoryHandle = {
+  name: string;
+  getDirectoryHandle: (
+    name: string,
+    opts?: { create?: boolean },
+  ) => Promise<DirectoryHandle>;
+  getFileHandle: (
+    name: string,
+    opts?: { create?: boolean },
+  ) => Promise<FileHandle>;
+};
+type FileHandle = {
+  createWritable: () => Promise<WritableStream<Uint8Array>>;
+};
+
+async function writeEntriesToDirectory(
+  root: DirectoryHandle,
+  entries: UnzipEntry[],
+): Promise<void> {
+  for (const entry of entries) {
+    const segments = entry.path.split("/").filter(Boolean);
+    if (segments.length === 0) continue;
+    const fileName = segments.pop()!;
+    let dir = root;
+    for (const seg of segments) {
+      dir = await dir.getDirectoryHandle(seg, { create: true });
+    }
+    const fh = await dir.getFileHandle(fileName, { create: true });
+    const ws = await fh.createWritable();
+    const writer = ws.getWriter();
+    await writer.write(entry.content);
+    await writer.close();
+  }
 }
 
 // --- Status banner ---------------------------------------------------

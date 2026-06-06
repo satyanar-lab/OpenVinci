@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
+import zipfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -394,6 +397,43 @@ def create_app() -> FastAPI:
 
     # --- generate -----------------------------------------------------
 
+    def _resolve_generate_inputs(
+        project_query: str | None, body: GenerateRequest | None
+    ) -> tuple[Project, Path | None, str]:
+        """Shared input resolution for /api/generate and /api/generate/zip.
+
+        Returns (project, source_dir, label). `source_dir` is None when the
+        request is purely in-memory; otherwise it points at a named example
+        so the stage step can pick up ancillary files (DBC, E2E.json, …).
+        Same no-server-paths stance as /api/import/dbc — the label that
+        comes back to the client is the project NAME, never an absolute
+        path.
+        """
+        if body is not None and body.project is not None:
+            proj = _project_from_request(body.project)
+            source_dir = (
+                _examples_dir() / body.sourceProject if body.sourceProject else None
+            )
+            label = body.sourceProject or "<in-memory>"
+        elif project_query is not None:
+            project_dir = _examples_dir() / project_query
+            if not project_dir.is_dir():
+                raise HTTPException(
+                    status_code=404, detail=f"project not found: {project_query}"
+                )
+            try:
+                proj = load_project(project_dir)
+            except UnknownConfigClassError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            source_dir = project_dir
+            label = project_query
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="provide ?project=<name> or a JSON body with `project`",
+            )
+        return proj, source_dir, label
+
     @app.post("/api/generate")
     def api_generate(
         project: str | None = Query(None, description="Named project on disk"),
@@ -407,29 +447,7 @@ def create_app() -> FastAPI:
           the UI's in-memory state; sourceProject lets the staging step pull
           in ancillary files (DBC, E2E.json, …) from a known on-disk project.
         """
-        if body is not None and body.project is not None:
-            proj = _project_from_request(body.project)
-            source_dir = (
-                _examples_dir() / body.sourceProject if body.sourceProject else None
-            )
-            label = body.sourceProject or "<in-memory>"
-        elif project is not None:
-            project_dir = _examples_dir() / project
-            if not project_dir.is_dir():
-                raise HTTPException(
-                    status_code=404, detail=f"project not found: {project}"
-                )
-            try:
-                proj = load_project(project_dir)
-            except UnknownConfigClassError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-            source_dir = project_dir
-            label = project
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="provide ?project=<name> or a JSON body with `project`",
-            )
+        proj, source_dir, label = _resolve_generate_inputs(project, body)
 
         workdir = Path(tempfile.mkdtemp(prefix="openvinci-gen-"))
         try:
@@ -443,6 +461,67 @@ def create_app() -> FastAPI:
             }
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    @app.post("/api/generate/zip")
+    def api_generate_zip(
+        project: str | None = Query(None, description="Named project on disk"),
+        body: GenerateRequest | None = Body(None),
+    ) -> StreamingResponse:
+        """Same stage+generate as /api/generate, returned as a STORED .zip.
+
+        STORED (no compression) so a tiny in-browser unzipper can decode
+        the entries for the optional "Save to folder" path in the UI —
+        the host-sim outputs are KB-scale C/H files that don't benefit
+        from DEFLATE anyway. The arcnames mirror the same project-
+        relative paths the JSON `files` field would carry, so the zip is
+        a verbatim view of what /api/generate already returned.
+
+        No server filesystem paths cross the wire; the only label the
+        response carries is the project NAME (or "in-memory") embedded
+        in the Content-Disposition filename.
+        """
+        proj, source_dir, label = _resolve_generate_inputs(project, body)
+
+        workdir = Path(tempfile.mkdtemp(prefix="openvinci-gen-"))
+        buf = io.BytesIO()
+        try:
+            result = generate_and_compile(proj, workdir, source_dir=source_dir)
+            if not result.files:
+                # Generation failed silently — surface that rather than
+                # streaming a zero-entry zip the user would have to
+                # debug. The browser flow hides the Download button in
+                # this case, but a direct API caller deserves a real
+                # response.
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "generation produced no files; check /api/generate "
+                        "for diagnostics"
+                    ),
+                )
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+                for f in result.files:
+                    src = workdir / f.path
+                    if not src.is_file():
+                        continue
+                    zf.write(src, arcname=f.path)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+        buf.seek(0)
+        safe_label = re.sub(r"[^A-Za-z0-9._-]", "_", label) or "project"
+        filename = f"openvinci-{safe_label}.zip"
+        # Content-Length is omitted on purpose so the StreamingResponse
+        # writer doesn't have to know the size up front; for KB-scale
+        # zips the browser handles the streamed download fine.
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={
+                "content-disposition": f'attachment; filename="{filename}"',
+                "x-openvinci-label": safe_label,
+            },
+        )
 
     # --- SPA serve (must register last) -------------------------------
     #
