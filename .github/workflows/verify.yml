@@ -16,15 +16,26 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Check out OpenVinci (without submodules — done manually next)
+      - name: Check out OpenVinci (recursive submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+        # vendor/as upstream registers `app/platform/qemu` as a gitlink
+        # without a URL in any .gitmodules, so the recursive descent
+        # exits non-zero. Top-level OpenVinci files + vendor/as itself
+        # are still checked out by this point; `continue-on-error`
+        # lets us fall through to the explicit-init fallback below.
+        continue-on-error: true
 
-      - name: Init vendor/as only (skip its broken nested submodules)
-        # vendor/as itself declares a nested `app/platform/qemu` submodule
-        # with no URL in its own .gitmodules, which trips both
-        # `submodules: true` and `recursive` in actions/checkout. We only
-        # need vendor/as itself, so init it explicitly without recursion.
-        run: git submodule update --init vendor/as
+      - name: Ensure vendor/as is initialized (fallback for upstream qemu gap)
+        run: |
+          if [ ! -d vendor/as/infras ]; then
+            git submodule update --init vendor/as
+          fi
+          # Hard fail if vendor/as is still missing — every level beyond
+          # Layer 1 schema unit tests needs it. The verify.sh guard catches
+          # the local case; this catches CI.
+          test -d vendor/as/infras
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5

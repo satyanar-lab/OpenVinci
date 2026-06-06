@@ -16,7 +16,20 @@ PYENV := PYTHONPATH= PYTHONNOUSERSITE=1
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8000
 
-.PHONY: help install install-backend install-frontend dev test test-backend test-frontend test-functional test-golden verify clean
+.PHONY: help check-submodule install install-backend install-frontend dev test test-backend test-frontend test-functional test-golden verify clean
+
+# Hard guard for every target that needs vendor/as. A fresh clone without
+# the submodule used to let L1-gen / L2 / L3 silently skip or fail in
+# obscure ways. Now: clear error, exit non-zero, never silent-pass.
+check-submodule:
+	@test -d $(ROOT)/vendor/as/infras || { \
+		echo "" >&2; \
+		echo "ERROR: vendor/as submodule is not initialized." >&2; \
+		echo "" >&2; \
+		echo "Run: git submodule update --init --recursive" >&2; \
+		echo "" >&2; \
+		exit 2; \
+	}
 
 help:
 	@echo "OpenVinci — make targets"
@@ -46,16 +59,19 @@ dev:
 
 test: test-backend test-frontend
 
-test-functional:
+test-functional: check-submodule
 	OPENVINCI_RUN_FUNCTIONAL=1 $(PYENV) $(PYTEST) $(ROOT)/tests/functional -v
 
-test-golden:
+test-golden: check-submodule
 	$(PYENV) $(PYTEST) $(ROOT)/tests/golden -v
 
-verify:
+verify: check-submodule
 	$(ROOT)/scripts/verify.sh
 
-test-backend:
+# Most backend tests work without vendor/as (round-trip, schema,
+# engine rules); the gen / DBC-matrix subsets don't. Guard the full
+# suite to keep failure messages clear.
+test-backend: check-submodule
 	cd $(BACKEND) && $(PYENV) $(PYTEST)
 
 test-frontend:

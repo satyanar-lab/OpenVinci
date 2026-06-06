@@ -82,6 +82,26 @@ require_binary "$PYTEST" || {
 require_binary gcc || exit 2
 require_binary g++ || exit 2
 
+# vendor/as is a hard dependency for every level beyond Layer 1's pure
+# JSON-Schema unit tests. L1-gen runs the upstream generators; L2 builds
+# the broker from vendor/as sources; L3 regenerates against vendor/as.
+# Silent-skipping any of these is the worst possible UX — a "PASS"
+# report would actually mean "we didn't check." Fail loud instead.
+if [ ! -d "$ROOT/vendor/as/infras" ]; then
+    cat >&2 <<'EOF'
+ERROR: vendor/as submodule is not initialized.
+
+  expected: vendor/as/infras/  (and the rest of the autoas/as tree)
+  found:    (missing)
+
+run:
+    git submodule update --init --recursive
+
+then re-run scripts/verify.sh.
+EOF
+    exit 2
+fi
+
 # ---- L1 validate -----------------------------------------------------
 run_level "L1 validate" "$LOG_DIR/l1-validate.log" \
     "$PYTEST" "$ROOT/backend/tests/engine" \
