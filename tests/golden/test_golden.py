@@ -33,9 +33,11 @@ EXAMPLES = REPO_ROOT / "examples"
 GOLDEN = Path(__file__).parent
 
 # Examples we snapshot. com-minimal is the L1 / L3 fixture — generation
-# clean, compile clean. canapp-min has DBC/E2E ancillaries that don't
+# clean, compile clean. canfd-minimal is its CAN-FD sister (dlc=16,
+# fd:true, UINT8N 16-byte signals) and gets the same byte-stable
+# generator guarantee. canapp-min has DBC/E2E ancillaries that don't
 # generate without the full vendor/as project tree, so skip it here.
-SNAPSHOT_EXAMPLES = ["com-minimal"]
+SNAPSHOT_EXAMPLES = ["com-minimal", "canfd-minimal"]
 
 
 @pytest.mark.parametrize("name", SNAPSHOT_EXAMPLES)

@@ -39,6 +39,8 @@ BUILD_DIR = REPO_ROOT / "build" / "functional"
 BROKER_BIN = BUILD_DIR / "can_simulator"
 NODE_BIN = BUILD_DIR / "openvinci_node"
 NODE_GEN_DIR = BUILD_DIR / "com-minimal"
+FD_NODE_BIN = BUILD_DIR / "openvinci_fd_node"
+FD_NODE_GEN_DIR = BUILD_DIR / "canfd-minimal"
 NODE_SRC_DIR = Path(__file__).parent / "node"
 
 
@@ -163,19 +165,65 @@ def node_binary(opt_in, broker_binary) -> Path:  # noqa: ARG001 (opt_in is a gat
     and the simulator Can driver + canlib. The binary supports the
     two CLI modes the tests already exercise (`--bus N`, `--probe`).
     """
-    if NODE_BIN.is_file() and _node_inputs_unchanged():
-        return NODE_BIN
+    return _build_node_binary(
+        example_name="com-minimal",
+        gen_dir_root=NODE_GEN_DIR,
+        node_main_filename="node_main.c",
+        bin_path=NODE_BIN,
+        build_log_name="node-build.log",
+    )
 
-    NODE_GEN_DIR.mkdir(parents=True, exist_ok=True)
-    _stage_and_generate_com_minimal()
-    gen_dir = NODE_GEN_DIR / "config" / "Com" / "GEN"
+
+@pytest.fixture(scope="session")
+def fd_node_binary(opt_in, broker_binary) -> Path:  # noqa: ARG001 (opt_in is a gate)
+    """Build the CAN-FD COM-stack node from examples/canfd-minimal.
+
+    Sister of `node_binary`. Different generated `*_Cfg.c` (the FD
+    config emits 16-byte Com_PduData buffers and a different signal id
+    enum), different node main (node_fd_main.c uses the
+    COM_SID_TxFdSignal / RxFdSignal symbols and a 16-byte UINT8N signal
+    payload). Same vendor/as BSW sources and simulator driver.
+    """
+    return _build_node_binary(
+        example_name="canfd-minimal",
+        gen_dir_root=FD_NODE_GEN_DIR,
+        node_main_filename="node_fd_main.c",
+        bin_path=FD_NODE_BIN,
+        build_log_name="fd-node-build.log",
+    )
+
+
+def _build_node_binary(
+    *,
+    example_name: str,
+    gen_dir_root: Path,
+    node_main_filename: str,
+    bin_path: Path,
+    build_log_name: str,
+) -> Path:
+    """Stage an example, run the generators, gcc-link the resulting
+    `*_Cfg.c` with the chosen node main + the shared BSW sources.
+
+    Returns the binary path; skips the calling test cleanly (with the
+    build log captured) if any step fails.
+    """
+    node_main_src = NODE_SRC_DIR / node_main_filename
+    node_glue_src = NODE_SRC_DIR / "node_glue.c"
+    if bin_path.is_file() and _node_inputs_unchanged(
+        bin_path, [node_main_src, node_glue_src]
+    ):
+        return bin_path
+
+    gen_dir_root.mkdir(parents=True, exist_ok=True)
+    _stage_and_generate(example_name, gen_dir_root)
+    gen_dir = gen_dir_root / "config" / "Com" / "GEN"
 
     sources_c = [VENDOR_AS / rel for rel in _NODE_C_SRC_REL] + [
         gen_dir / "Com_Cfg.c",
         gen_dir / "CanIf_Cfg.c",
         gen_dir / "PduR_Cfg.c",
-        NODE_SRC_DIR / "node_main.c",
-        NODE_SRC_DIR / "node_glue.c",
+        node_main_src,
+        node_glue_src,
     ]
     sources_cpp = [VENDOR_AS / rel for rel in _NODE_CPP_SRC_REL]
     for src in sources_c + sources_cpp:
@@ -200,26 +248,26 @@ def node_binary(opt_in, broker_binary) -> Path:  # noqa: ARG001 (opt_in is a gat
         cmd += ["-x", "c", str(src)]
     for src in sources_cpp:
         cmd += ["-x", "c++", str(src)]
-    cmd += ["-lpthread", "-luuid", "-o", str(NODE_BIN)]
+    cmd += ["-lpthread", "-luuid", "-o", str(bin_path)]
 
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        log = BUILD_DIR / "node-build.log"
+        log = BUILD_DIR / build_log_name
         log.write_text(proc.stdout + proc.stderr)
         pytest.skip(
-            f"node build failed (see {log.relative_to(REPO_ROOT)}):\n"
+            f"{example_name} node build failed (see "
+            f"{log.relative_to(REPO_ROOT)}):\n"
             + proc.stderr[-2000:]
         )
-    return NODE_BIN
+    return bin_path
 
 
-def _stage_and_generate_com_minimal() -> None:
-    """Copy examples/com-minimal into the build dir and run the upstream
+def _stage_and_generate(example_name: str, dst: Path) -> None:
+    """Copy examples/<example_name> into `dst` and run the upstream
     generators against it — same path the L1 gen pipeline uses, just
-    rooted at build/functional/com-minimal so we can re-link without
-    touching the example tree."""
-    src = REPO_ROOT / "examples" / "com-minimal"
-    dst = NODE_GEN_DIR
+    rooted at build/functional/<example_name> so we can re-link
+    without touching the example tree."""
+    src = REPO_ROOT / "examples" / example_name
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst)
@@ -242,16 +290,12 @@ def _stage_and_generate_com_minimal() -> None:
         generator.RootDir = saved_root
 
 
-def _node_inputs_unchanged() -> bool:
-    """Tiny cache: skip the rebuild if node_main.c + node_glue.c haven't
+def _node_inputs_unchanged(bin_path: Path, inputs: list[Path]) -> bool:
+    """Tiny cache: skip the rebuild if the node main + glue haven't
     changed since the binary was produced. Saves ~5 s on repeat runs."""
-    inputs = [
-        NODE_SRC_DIR / "node_main.c",
-        NODE_SRC_DIR / "node_glue.c",
-    ]
     if not all(p.is_file() for p in inputs):
         return False
-    bin_mtime = NODE_BIN.stat().st_mtime
+    bin_mtime = bin_path.stat().st_mtime
     return all(p.stat().st_mtime <= bin_mtime for p in inputs)
 
 

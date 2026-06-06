@@ -98,12 +98,13 @@ Top-level conventions and per-layer notes live in [`CLAUDE.md`](CLAUDE.md).
 
 ## How generated files are verified
 
-OpenVinci ships five verification levels. Each one makes a *specific*
+OpenVinci ships six verification levels. Each one makes a *specific*
 claim. Together they say: the configs OpenVinci emits are
 **structurally valid, syntactically + semantically valid C against the
 BSW headers, byte-stable across regenerations, transported byte-exact
 by the runtime simulator, and — when linked into a real node — route
-Com signals end-to-end through the generated CanIf→PduR→Com path.**
+both classic Com signals AND FD-sized PDUs end-to-end through the
+generated CanIf→PduR→Com path.**
 
 That is precisely what they say. It is **not** what they don't say —
 see the disclaimer below.
@@ -114,7 +115,8 @@ see the disclaimer below.
 | **L1 generate+compile** | `pytest backend/tests/test_gen_pipeline.py` | The upstream `vendor/as` generators emit `*_Cfg.{h,c}` from our project that parses cleanly with `gcc -c -fsyntax-only -Wall` against the BSW headers in `vendor/as/infras/communication/`. Catches syntax errors, type mismatches with the BSW, missing struct fields, missing includes. |
 | **L2 broker transport** | `make test-functional` (TestBrokerLoopback) | `vendor/as`'s `can_simulator` broker — the same TCP wire protocol the simulator-platform `Can.cpp` driver speaks at runtime — comes up, accepts clients, transports frames byte-exact between peers, and correctly suppresses sender echoes. The wire layer the rest of L2 sits on actually works. |
 | **L2 end-to-end (generated stack)** | `make test-functional` (TestComStackLoopback) | A real node binary is built by gcc-linking our generated `*_Cfg.c` (from `examples/com-minimal`) with the upstream Com / CanIf / PduR / Can MCAL sources plus the simulator Can driver. With that node running: (a) `Com_SendSignal(COM_SID_TxSignal, …)` on the generated config becomes a CAN frame at id `0x100` that the broker routes to a Python listener, and (b) a `0x101` frame the harness injects is decoded by the generated `CanIf → PduR_CanIfRxIndication → PduR_RxIndication → Com_RxIndication` path, and `Com_ReceiveSignal(COM_SID_RxSignal, …)` returns the exact byte the harness sent. The OpenVinci-emitted config wires real data through the upstream stack. |
-| **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
+| **L2 end-to-end CAN FD (generated stack)** | `make test-functional` (TestCanFdLoopback) | Same chain, against `examples/canfd-minimal`: an FD-marked PDU (`fd: true`, `dlc: 16`) with a 16-byte `UINT8N` signal on each direction. With the FD node running: (a) `Com_SendSignal(COM_SID_TxFdSignal, …)` becomes a wire frame at id `0x200` whose dlc field equals **16** and whose 16 payload bytes equal the bytes the node Com-sent — anything narrower would silently pass the classic check. (b) The harness injects a known 16-byte payload at id `0x201`; the generated `CanIf → PduR_CanIfRxIndication → PduR_RxIndication → Com_RxIndication` path populates the FD Com IPDU, and `Com_ReceiveSignal(COM_SID_RxFdSignal, …)` returns **all 16 bytes** byte-exact. FD-sized PDU routing through the OpenVinci-emitted Com/CanIf/PduR config + upstream BSW is real, not stubbed. |
+| **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot, for both `com-minimal` and `canfd-minimal`. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
 
 Run them all:
 
@@ -143,16 +145,30 @@ this carefully:
 - ISO 26262 / ASIL functional-safety claims, AUTOSAR conformance
   certification, MISRA-C compliance audits — none of these are
   exercised by these tests, and none are claimed by the project.
-- A successful L2 end-to-end says "for this configured PDU, on this
-  configured signal, the generated CanIf→PduR→Com path round-trips a
-  single byte through the upstream BSW on a host simulator." It does
-  not say "your Dcm session-control state machine handles 0x10 03
-  correctly," "your CanNm wake-up signalling is spec-conformant," or
-  "your generated E2E checksums match what the OEM expects." Higher
-  layers (Dcm, CanNm, SecOC, E2E, COM groups, signal gateways, …) are
-  not exercised — not yet linked, not yet verified. Multi-signal,
-  multi-message, and multi-network coverage past `examples/com-minimal`
-  is on the user.
+- A successful L2 end-to-end (classic + FD) says "for these configured
+  PDUs, on these configured signals, the generated CanIf→PduR→Com path
+  round-trips a single byte (classic, `examples/com-minimal`) and
+  a 16-byte UINT8N payload (FD, `examples/canfd-minimal`) through the
+  upstream BSW on a host simulator." It does not say "your Dcm
+  session-control state machine handles 0x10 03 correctly," "your
+  CanNm wake-up signalling is spec-conformant," or "your generated
+  E2E checksums match what the OEM expects." Higher layers (Dcm,
+  CanNm, SecOC, E2E, COM groups, signal gateways, …) are not exercised
+  — not yet linked, not yet verified. Multi-signal, multi-message, and
+  multi-network coverage past the two minimal fixtures is on the user.
+- **CAN FD specifically.** L2 FD proves *FD-sized PDU routing* on a
+  host simulator (broker + simulator Can driver), not FD bit-rate
+  switching (BRS), FD data-phase timing, or arbitration-phase /
+  data-phase sample-point split. Those parameters live in the
+  hand-written `Can_Cfg.c` of the MCAL — which OpenVinci does NOT
+  generate (see `docs/AUTOAS_NOTES.md` §1.2 — there is no upstream
+  `Can` generator) and the host simulator does not model. On real CAN
+  FD hardware the upstream `CanIf.py` generator also strips the
+  `CAN_CANFD_ID_TYPE` (0x40000000) bit from canids (`vendor/as/tools/
+  generator/CanIf.py:115, :134-135, :253-254`); OpenVinci preserves the
+  intent in the `fd: true` flag at the config level but does not yet
+  re-inject the bit at the generator hand-off. See
+  `docs/CANFD_FEASIBILITY.md` §4.
 - The upstream `autoas/as` BSW is itself a study project (see the
   license note above). It is not a tier-1 supplier's
   series-production AUTOSAR stack.

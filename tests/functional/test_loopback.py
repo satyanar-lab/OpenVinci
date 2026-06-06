@@ -16,6 +16,15 @@ links our generated `*_Cfg.c` with Com.c + CanIf.c + PduR.c + mcal
 Can.c and the simulator Can driver (path (b) above). Init sequence and
 MainFunction pumping mirror what `vendor/as/app/app/main.c` does for
 the relevant layers. See `tests/functional/node/node_main.c`.
+
+TestCanFdLoopback proves the same end-to-end claim at an FD-sized PDU
+(dlc=16). The fd_node_binary fixture builds a sister node from
+examples/canfd-minimal whose Com config emits a 16-byte UINT8N signal
+on a CAN-FD-marked PDU; the Tx test asserts the broker sees the
+configured 16 bytes byte-exact at id 0x200, the Rx test injects 16
+bytes at id 0x201 and asserts Com_ReceiveSignal returns them all
+byte-exact — proving the FD-sized data path through the OpenVinci-
+emitted Com/CanIf/PduR config plus the upstream BSW.
 """
 
 from __future__ import annotations
@@ -193,4 +202,122 @@ class TestComStackLoopback:
         log_text = log_path.read_text()
         assert "RxSignal=0x42" in log_text, (
             "node did not log the expected Rx signal value:\n" + log_text
+        )
+
+
+# --- end-to-end with a CAN-FD COM-stack-linked node -------------------
+
+
+class TestCanFdLoopback:
+    """End-to-end through the real COM stack with our generated CAN-FD
+    config (examples/canfd-minimal).
+
+    Same shape as TestComStackLoopback but with an FD-sized PDU
+    (dlc=16) and a 16-byte UINT8N signal on each direction. The
+    fd_node_binary fixture stages canfd-minimal, runs the upstream
+    generators against it, gcc-links the resulting *_Cfg.c with the
+    same Com / CanIf / PduR / mcal-Can sources + simulator Can driver,
+    and produces a binary that drives the FD PDUs through their two
+    CLI modes."""
+
+    # The 16-byte payload node_fd_main.c writes via Com_SendSignal on
+    # TxFdSignal. Kept in sync with k_tx_payload in
+    # tests/functional/node/node_fd_main.c — the test treats it as
+    # ground truth and the assertion is on the broker's view of the
+    # wire frame.
+    _TX_PAYLOAD: bytes = bytes(
+        [
+            0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
+            0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51,
+        ]
+    )
+
+    # Distinct injected payload for the Rx direction — every byte
+    # different from _TX_PAYLOAD and from the Com zero-init buffer, so
+    # any mistaken echo or stub would be obvious.
+    _RX_PAYLOAD: bytes = bytes(
+        [
+            0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
+            0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+        ]
+    )
+
+    def test_node_transmits_fd_frame_at_configured_dlc(
+        self, broker, fd_node_binary: Path, free_can_port: int
+    ):
+        log_path = cf.BUILD_DIR / f"fd-node-{free_can_port}.log"
+        log = log_path.open("w")
+        node = subprocess.Popen(
+            [str(fd_node_binary), "--bus", str(free_can_port)],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            _wait_for_node_ready(log_path, timeout=5.0)
+            listener = connect_node(free_can_port)
+            # CycleTime=1000 on canfd-minimal's TX_FD_MSG; one frame
+            # within ~1 s after the node starts.
+            listener.settimeout(3.0)
+            canid, payload = decode_frame(listener.recv(CAN_FRAME_SIZE))
+            assert canid == 0x200, f"expected configured FD Tx id, got 0x{canid:x}"
+            # The dlc field of the broker's wire frame must reflect the
+            # 16-byte FD PDU we generated. The 0..7 case would happily
+            # pass a "this is Classic CAN" check, so testing this is the
+            # core of the L2 FD claim.
+            assert len(payload) == 16, (
+                f"FD wire dlc must be 16; got {len(payload)} byte frame: "
+                f"{payload.hex()}"
+            )
+            # Bytes must be the exact constant the node Com_SendSignal'd
+            # — nothing about the simulator path is allowed to drop or
+            # rewrite them.
+            assert payload == self._TX_PAYLOAD, (
+                f"FD Tx payload mismatch:\n  expected: {self._TX_PAYLOAD.hex()}\n"
+                f"  got:      {payload.hex()}"
+            )
+            listener.close()
+        finally:
+            node.terminate()
+            try:
+                node.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                node.kill()
+            log.close()
+
+    def test_node_receives_fd_frame_and_logs_full_payload(
+        self, broker, fd_node_binary: Path, free_can_port: int
+    ):
+        log_path = cf.BUILD_DIR / f"fd-node-rx-{free_can_port}.log"
+        log = log_path.open("w")
+        node = subprocess.Popen(
+            [str(fd_node_binary), "--bus", str(free_can_port), "--probe"],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            _wait_for_node_ready(log_path, timeout=5.0)
+            tester = connect_node(free_can_port)
+            # Broker registers new sockets via select(); give it a
+            # round-trip to land the tester before injecting.
+            time.sleep(0.4)
+            # canfd-minimal's RX_FD_MSG id is 0x201, dlc=16; the
+            # injected 16 bytes should land in the RxFdSignal slot
+            # byte-exact.
+            tester.send(encode_frame(0x201, self._RX_PAYLOAD))
+            expected_line = f"RxFdSignal={self._RX_PAYLOAD.hex()}"
+            _wait_for_log_contains(log_path, expected_line, timeout=3.0)
+            tester.close()
+        finally:
+            node.terminate()
+            try:
+                node.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                node.kill()
+            log.close()
+        log_text = log_path.read_text()
+        expected_line = f"RxFdSignal={self._RX_PAYLOAD.hex()}"
+        assert expected_line in log_text, (
+            "node did not log the expected Rx FD payload (must come from "
+            "Com_ReceiveSignal — nothing is hardcoded in node_fd_main.c):\n"
+            + log_text
         )

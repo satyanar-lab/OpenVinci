@@ -18,7 +18,16 @@
 #                              byte round-trips end-to-end through the
 #                              generated CanIf→PduR→Com path
 #                              (TestComStackLoopback)
-#   5. golden                — regenerate, normalize timestamps,
+#   5. end-to-end CAN FD     — same chain, against examples/canfd-
+#      (generated stack)       minimal: 16-byte UINT8N signal on an
+#                              FD-marked PDU (dlc=16). Asserts the
+#                              broker sees a 16-byte frame at id 0x200
+#                              with the exact bytes the node
+#                              Com_SendSignal'd, and that
+#                              Com_ReceiveSignal returns all 16 bytes
+#                              of an injected 0x201 frame byte-exact
+#                              (TestCanFdLoopback)
+#   6. golden                — regenerate, normalize timestamps,
 #                              byte-diff against
 #                              tests/golden/<example>/expected/
 #
@@ -146,6 +155,18 @@ run_level "L2 broker transport" "$LOG_DIR/l2-broker.log" \
 run_level "L2 end-to-end (generated stack)" "$LOG_DIR/l2-e2e.log" \
     env OPENVINCI_RUN_FUNCTIONAL=1 \
     "$PYTEST" "$ROOT/tests/functional/test_loopback.py::TestComStackLoopback"
+
+# ---- L2 end-to-end CAN FD (generated stack) -------------------------
+# Sister of L2 end-to-end, run against examples/canfd-minimal: a
+# 16-byte UINT8N signal rides an FD-marked PDU with dlc=16. The Tx
+# assertion now also checks the wire dlc field (==16) and that the
+# 16-byte payload matches what the node Com_SendSignal'd byte-for-byte
+# — anything narrower would silently pass the classic-CAN check above.
+# The Rx assertion is symmetric: 16 known bytes injected at id 0x201,
+# and Com_ReceiveSignal must return all 16 byte-exact.
+run_level "L2 end-to-end CAN FD (generated stack)" "$LOG_DIR/l2-e2e-canfd.log" \
+    env OPENVINCI_RUN_FUNCTIONAL=1 \
+    "$PYTEST" "$ROOT/tests/functional/test_loopback.py::TestCanFdLoopback"
 
 # ---- L3 golden -------------------------------------------------------
 run_level "L3 golden snapshot" "$LOG_DIR/l3-golden.log" \

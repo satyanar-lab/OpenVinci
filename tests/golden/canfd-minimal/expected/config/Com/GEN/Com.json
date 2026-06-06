@@ -11,7 +11,7 @@
       "messages": [
         {
           "name": "TX_FD_MSG",
-          "id": "0x200",
+          "id": 512,
           "dlc": 16,
           "fd": true,
           "node": "AS",
@@ -28,13 +28,15 @@
               "offset": 0,
               "min": 0,
               "max": 0,
-              "node": ["Other"]
+              "node": [
+                "Other"
+              ]
             }
           ]
         },
         {
           "name": "RX_FD_MSG",
-          "id": "0x201",
+          "id": 513,
           "dlc": 16,
           "fd": true,
           "node": "Other",
@@ -50,7 +52,9 @@
               "offset": 0,
               "min": 0,
               "max": 0,
-              "node": ["AS"]
+              "node": [
+                "AS"
+              ]
             }
           ]
         }
