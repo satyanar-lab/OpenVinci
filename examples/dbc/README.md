@@ -10,7 +10,8 @@ resulting project compiles clean at VERIFICATION LEVEL 1 — see
 |------|--------|----------------|
 | `sample.dbc` | OpenVinci (hand-written) | Two messages, one Tx + one Rx, with scaled and signed signals — the smoke fixture used in `docs/DEMO.md`. |
 | `motohawk.dbc` | [cantools](https://github.com/cantools/cantools) tests | Classic engine-ECU test fixture. One message (`ExampleMessage`), three signals (`Enable`, `AverageRadius`, `Temperature`). Big-endian. |
-| `motohawk_fd.dbc` | cantools tests | CAN-FD variant of `motohawk.dbc`. Same shape; exercises the `network: "CANFD"` path. |
+| `motohawk_fd.dbc` | cantools tests | CAN-FD variant of `motohawk.dbc`. Same shape (dlc=8); exercises the `is_fd → message.fd` importer path at a Classic-compatible length. |
+| `fd-payload.dbc` | OpenVinci (hand-written) | Two FD messages (`FD_TX`, `FD_RX`) with dlc=16. Exercises the FD-dlc>8 path in the importer + the `com.message-dlc-valid` engine rule. |
 | `foobar.dbc` | cantools tests | Five messages, four senders (`FOO`, `BAR`, `FIE`, `FUM`). Mixed direction; good multi-node integration check. |
 | `j1939.dbc` | cantools tests | Two messages using the J1939 protocol. Exercises larger frame IDs. |
 | `multiple_senders.dbc` | cantools tests | A single message declared with multiple senders — edge case for the importer's "first sender wins" choice. |

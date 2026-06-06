@@ -16,6 +16,7 @@ from gen import GENERATABLE_CLASSES, generate_and_compile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COM_MINIMAL = REPO_ROOT / "examples" / "com-minimal"
+CANFD_MINIMAL = REPO_ROOT / "examples" / "canfd-minimal"
 
 
 @pytest.fixture(scope="module")
@@ -23,6 +24,13 @@ def gen_result(tmp_path_factory):
     workdir = tmp_path_factory.mktemp("openvinci-com-minimal")
     project = load_project(COM_MINIMAL)
     return generate_and_compile(project, workdir, source_dir=COM_MINIMAL)
+
+
+@pytest.fixture(scope="module")
+def fd_gen_result(tmp_path_factory):
+    workdir = tmp_path_factory.mktemp("openvinci-canfd-minimal")
+    project = load_project(CANFD_MINIMAL)
+    return generate_and_compile(project, workdir, source_dir=CANFD_MINIMAL)
 
 
 def test_compile_is_clean(gen_result):
@@ -72,6 +80,26 @@ def test_each_file_records_size_and_module(gen_result):
             assert f.module in canonical, f
             saw_canonical = True
     assert saw_canonical, "no canonical *_Cfg.{c,h} appeared in the output"
+
+
+def test_canfd_minimal_compiles_clean(fd_gen_result):
+    """Sister case to test_compile_is_clean: the same generate→gcc-syntax
+    chain on a project where both PDUs are CAN FD (dlc=16, fd:true).
+    The upstream Com / CanIf / PduR generators all accept the fd flag
+    transparently (it rides on `additionalProperties: true`) and the
+    16-byte Com_PduData buffer compiles against the BSW headers."""
+    cr = fd_gen_result.compile_result
+    assert cr is not None
+    assert cr.status == "ok", (
+        "canfd-minimal compile failed:\n"
+        + "\n".join(
+            f"  {m.severity.upper()} {m.file}:{m.line}: {m.message}"
+            for m in cr.messages
+        )
+    )
+    paths = {f.path for f in fd_gen_result.files}
+    for stem in ("Com_Cfg.c", "CanIf_Cfg.c", "PduR_Cfg.c"):
+        assert any(p.endswith(stem) for p in paths), f"missing {stem}"
 
 
 def test_canapp_min_compiles_when_full_ancillaries_present():

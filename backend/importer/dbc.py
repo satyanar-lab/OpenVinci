@@ -34,20 +34,28 @@ def parse_dbc(path: str | Path) -> list[dict[str, Any]]:
     """Parse a .dbc into a list of Com message dicts.
 
     The output shape matches `model/com.schema.json`'s Message $def.
+
+    `cantools.database.Message.is_fd` is true when the DBC marks a frame
+    as CAN FD (via the `BO_` VFrameFormat attribute / extended DBC).
+    Lengths up to 64 are surfaced as-is — the schema accepts dlc<=64
+    and the engine's `com.message-dlc-valid` rule enforces the FD vs
+    classic length set. See docs/CANFD_FEASIBILITY.md §2.12 for why this
+    matters at the importer boundary.
     """
     db = cantools.database.load_file(str(path))
     out: list[dict[str, Any]] = []
     for msg in db.messages:
-        out.append(
-            {
-                "name": _identifier(msg.name),
-                "id": f"0x{msg.frame_id:x}",
-                "dlc": msg.length,
-                "node": _identifier(msg.senders[0]) if msg.senders else "Unknown",
-                "CycleTime": int(msg.cycle_time or 0),
-                "signals": [_signal(sig) for sig in msg.signals],
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": _identifier(msg.name),
+            "id": f"0x{msg.frame_id:x}",
+            "dlc": msg.length,
+            "node": _identifier(msg.senders[0]) if msg.senders else "Unknown",
+            "CycleTime": int(msg.cycle_time or 0),
+            "signals": [_signal(sig) for sig in msg.signals],
+        }
+        if getattr(msg, "is_fd", False):
+            entry["fd"] = True
+        out.append(entry)
     return out
 
 

@@ -311,6 +311,96 @@ def canif_up_module_configured(project: Project) -> Iterable[Issue]:
                     )
 
 
+# CAN FD frame sizes accepted by `vendor/as/tools/generator/CanTp.py`
+# `CanTp_GetDL` (vendor/as/infras/communication/CanTp/CanTp.c:90) and
+# documented in docs/CANFD_FEASIBILITY.md §2.10. Classic frames must be
+# <= 8.
+_FD_DLC_VALUES: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64})
+
+
+@_rule
+def com_message_dlc_valid(project: Project) -> Iterable[Issue]:
+    """Validate Com message dlc against fd flag.
+
+    Applies only to Com messages that ride a single CAN frame on the
+    wire (Com → CanIf, direct):
+
+    - fd=true  ⇒ dlc must be in {0..8, 12, 16, 20, 24, 32, 48, 64}.
+    - fd=false ⇒ dlc must be <= 8 (Classic CAN).
+
+    Skipped for messages routed through CanTp (segmented transport, dlc
+    is the unsegmented payload) or through an unmodeled module
+    (SecOC, Mirror, …) — those legitimately carry >8 bytes on classic
+    CAN. The classic-PDU-carrying->8-bytes case is the surprise the
+    importer is most likely to produce when a DBC drops the FD bit;
+    flag it as an error with a suggested fix (set fd=true).
+    """
+    if not project.com:
+        return
+    # SecOC / Mirror / Csm / ... legitimately rename + resize PDUs at
+    # every hop; the Com dlc is decoupled from the on-wire frame size.
+    # Defer to the existing intermediates check.
+    skip_all = _has_unmodeled_intermediates(project)
+
+    routes_by_name: dict[str, Any] = {}
+    if project.pdur is not None:
+        routes_by_name = {r.name: r for r in project.pdur.routines}
+
+    for ni, net in enumerate(project.com.networks):
+        if skip_all:
+            continue
+        for mi, msg in enumerate(net.messages or []):
+            # Per-message: skip when the route doesn't terminate at CanIf
+            # (Com → CanTp → ... is segmented; dlc is pre-segmentation).
+            derived = derived_pdu_name(msg, net)
+            route = routes_by_name.get(derived)
+            if route is not None:
+                other = route.to if route.from_ == "Com" else route.from_
+                if other != "CanIf":
+                    continue
+
+            is_fd = bool(msg.fd)
+            location = Location("Com", ("networks", ni, "messages", mi, "dlc"))
+            if is_fd:
+                if msg.dlc not in _FD_DLC_VALUES:
+                    yield Issue(
+                        rule="com.message-dlc-valid",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Com FD message {msg.name!r} dlc={msg.dlc} is not a valid "
+                            f"CAN FD frame size. Allowed: "
+                            f"{sorted(_FD_DLC_VALUES)}."
+                        ),
+                        location=location,
+                        fix=None,
+                    )
+            else:
+                if msg.dlc > 8:
+                    yield Issue(
+                        rule="com.message-dlc-valid",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Com message {msg.name!r} has dlc={msg.dlc} but fd is not "
+                            f"set; classic CAN frames are at most 8 bytes. Set "
+                            f"'fd': true to use a CAN FD frame size."
+                        ),
+                        location=location,
+                        fix=Fix(
+                            description=(
+                                f"Mark Com message {msg.name!r} as CAN FD (fd: true)"
+                            ),
+                            patches={
+                                "Com": [
+                                    _patch_add(
+                                        f"/networks/{ni}/messages/{mi}/fd",
+                                        True,
+                                    )
+                                ]
+                            },
+                        ),
+                    )
+
+
 @_rule
 def com_message_id_unique_per_network(project: Project) -> Iterable[Issue]:
     """Two messages on the same Com network can't share a CAN id."""

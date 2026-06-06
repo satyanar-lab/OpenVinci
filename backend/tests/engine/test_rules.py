@@ -258,6 +258,170 @@ def test_canif_up_module_silent_for_unmodeled_modules():
     assert _no_issues(p, "canif.up-module-configured")
 
 
+# ----- com.message-dlc-valid ------------------------------------------
+
+
+def _com_msg(name: str, *, id_: str, dlc: int, fd: bool | None = None) -> dict:
+    msg: dict = {
+        "name": name,
+        "id": id_,
+        "dlc": dlc,
+        "node": "AS",
+        "signals": [{"name": f"sig_{name}", "start": 0, "size": 8, "endian": "little"}],
+    }
+    if fd is not None:
+        msg["fd"] = fd
+    return msg
+
+
+def test_com_message_dlc_valid__classic_8_ok():
+    p = make_project(
+        com_=com(
+            networks=[
+                {
+                    "name": "CAN0",
+                    "network": "CAN",
+                    "me": "AS",
+                    "messages": [_com_msg("A", id_="0x100", dlc=8)],
+                }
+            ]
+        )
+    )
+    assert _no_issues(p, "com.message-dlc-valid")
+
+
+def test_com_message_dlc_valid__classic_over_8_flagged():
+    p = make_project(
+        com_=com(
+            networks=[
+                {
+                    "name": "CAN0",
+                    "network": "CAN",
+                    "me": "AS",
+                    "messages": [_com_msg("A", id_="0x100", dlc=16)],
+                }
+            ]
+        )
+    )
+    issues = _issues(p, "com.message-dlc-valid")
+    assert len(issues) == 1
+    assert issues[0].severity is Severity.ERROR
+    # The auto-fix should set fd: true so the engine can recover the
+    # most common DBC-import shape (FD bit dropped, payload >8) without
+    # the user having to hand-edit.
+    fix = issues[0].fix
+    assert fix is not None and "Com" in fix.patches
+    patch = fix.patches["Com"][0]
+    assert patch["op"] == "add"
+    assert patch["path"].endswith("/fd")
+    assert patch["value"] is True
+
+
+def test_com_message_dlc_valid__fd_dlc_in_allowed_set():
+    for dlc in (12, 16, 20, 24, 32, 48, 64):
+        p = make_project(
+            com_=com(
+                networks=[
+                    {
+                        "name": "CAN0",
+                        "network": "CANFD",
+                        "me": "AS",
+                        "messages": [_com_msg("A", id_="0x100", dlc=dlc, fd=True)],
+                    }
+                ]
+            )
+        )
+        assert _no_issues(p, "com.message-dlc-valid"), f"dlc={dlc} should be valid"
+
+
+def test_com_message_dlc_valid__fd_dlc_not_in_allowed_set():
+    # 9 is illegal under both branches: too big for classic, not a valid FD size.
+    p = make_project(
+        com_=com(
+            networks=[
+                {
+                    "name": "CAN0",
+                    "network": "CANFD",
+                    "me": "AS",
+                    "messages": [_com_msg("A", id_="0x100", dlc=9, fd=True)],
+                }
+            ]
+        )
+    )
+    issues = _issues(p, "com.message-dlc-valid")
+    assert len(issues) == 1
+    # No auto-fix for an invalid FD size — the user has to round the
+    # message up to the next legal size themselves.
+    assert issues[0].fix is None
+
+
+def test_com_message_dlc_valid__skipped_for_cantp_routed_message():
+    """A Com message that PduR routes Com → CanTp is segmented across
+    multiple CAN frames; its Com dlc reflects the unsegmented payload,
+    not a single CAN frame size. The rule must defer to that."""
+    p = make_project(
+        canif_=canif(),
+        cantp_=cantp(),
+        pdur_=pdur(
+            routines=[{"name": "CAN0_BIG_MSG_TX", "from": "Com", "to": "CanTp"}]
+        ),
+        com_=com(
+            networks=[
+                {
+                    "name": "CAN0",
+                    "network": "CAN",
+                    "me": "AS",
+                    "messages": [_com_msg("BIG_MSG", id_="0x500", dlc=32)],
+                }
+            ]
+        ),
+    )
+    assert _no_issues(p, "com.message-dlc-valid")
+
+
+def test_com_message_dlc_valid__skipped_when_secoc_intermediates_present():
+    """SecOC wraps Com messages; the Com dlc and the on-wire CAN frame
+    are decoupled. The rule defers when any unmodeled module sits in
+    the route, matching the convention of com.message-has-canif-pdu."""
+    p = make_project(
+        canif_=canif(),
+        pdur_=pdur(
+            routines=[
+                {"name": "CAN0_SECOC_MSG_TX", "from": "Com", "to": "SecOC"},
+                {"name": "FW_CAN0_SECOC_MSG_TX", "from": "SecOC", "to": "CanIf"},
+            ]
+        ),
+        com_=com(
+            networks=[
+                {
+                    "name": "CAN0",
+                    "network": "CAN",
+                    "me": "AS",
+                    "messages": [_com_msg("SECOC_MSG", id_="0x99", dlc=36)],
+                }
+            ]
+        ),
+    )
+    assert _no_issues(p, "com.message-dlc-valid")
+
+
+def test_com_message_dlc_valid__fd_under_8_still_ok():
+    # FD frames may carry 0..8 bytes too; same length set as classic.
+    p = make_project(
+        com_=com(
+            networks=[
+                {
+                    "name": "CAN0",
+                    "network": "CANFD",
+                    "me": "AS",
+                    "messages": [_com_msg("A", id_="0x100", dlc=4, fd=True)],
+                }
+            ]
+        )
+    )
+    assert _no_issues(p, "com.message-dlc-valid")
+
+
 # ----- com.message-id-unique-per-network ------------------------------
 
 

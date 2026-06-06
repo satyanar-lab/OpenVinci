@@ -91,6 +91,11 @@
         "name": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/Identifier" },
         "id": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
         "dlc": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "fd": {
+          "type": "boolean",
+          "default": false,
+          "description": "CAN FD frame. When true, dlc may take any value in {0..8,12,16,20,24,32,48,64}; when false, dlc <= 8. Length-set enforced by engine rule com.message-dlc-valid (docs/CANFD_FEASIBILITY.md §4.1)."
+        },
         "node": { "type": "string" },
         "CycleTime": {
           "type": "integer",

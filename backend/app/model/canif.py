@@ -20,6 +20,7 @@ class RxPdu(OpenVinciModel):
     hoh: int
     up: str
     mask: str | None = None
+    fd: bool | None = None
 
 
 class TxPdu(OpenVinciModel):
@@ -28,6 +29,7 @@ class TxPdu(OpenVinciModel):
     hoh: int
     up: str
     dynamic: bool | None = None
+    fd: bool | None = None
 
 
 class CanIfNetwork(OpenVinciModel):

@@ -47,6 +47,7 @@ class Message(OpenVinciModel):
     name: str
     id: str
     dlc: int
+    fd: bool | None = None
     node: str
     CycleTime: int | None = None
     signals: list[Signal]

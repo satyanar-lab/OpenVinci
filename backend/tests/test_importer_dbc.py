@@ -12,6 +12,8 @@ from importer import auto_wire_from_com, import_dbc_file, parse_dbc
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_DBC = REPO_ROOT / "examples" / "dbc" / "sample.dbc"
+MOTOHAWK_FD_DBC = REPO_ROOT / "examples" / "dbc" / "motohawk_fd.dbc"
+FD_PAYLOAD_DBC = REPO_ROOT / "examples" / "dbc" / "fd-payload.dbc"
 
 
 # --- parse_dbc -------------------------------------------------------
@@ -70,6 +72,61 @@ def test_parse_receivers_become_node_list():
     msgs = parse_dbc(SAMPLE_DBC)
     counter = msgs[0]["signals"][0]
     assert counter["node"] == ["Other"]
+
+
+# --- CAN FD --------------------------------------------------------
+
+
+def test_parse_does_not_set_fd_on_classic_messages():
+    """The fd flag is opt-in; classic DBCs should not surface it."""
+    msgs = parse_dbc(SAMPLE_DBC)
+    for m in msgs:
+        assert "fd" not in m, m
+
+
+def test_parse_sets_fd_when_dbc_marks_message_as_fd():
+    """motohawk_fd.dbc carries `BA_ \"VFrameFormat\" BO_ <id> 15`
+    (ExtendedCAN_FD) — cantools surfaces that as msg.is_fd, the
+    importer must propagate it as `fd: true`."""
+    msgs = parse_dbc(MOTOHAWK_FD_DBC)
+    assert msgs[0]["fd"] is True
+
+
+def test_parse_preserves_fd_dlc_above_8():
+    """fd-payload.dbc has two 16-byte FD frames; cantools reports
+    msg.length == 16 and the importer must surface that verbatim
+    (>8 is only legal because fd is true)."""
+    msgs = parse_dbc(FD_PAYLOAD_DBC)
+    assert {m["name"] for m in msgs} == {"FD_TX", "FD_RX"}
+    for m in msgs:
+        assert m["fd"] is True
+        assert m["dlc"] == 16
+
+
+def test_import_fd_dbc_validates_clean_and_propagates_fd_through_canif():
+    """Round-trip evidence: an FD DBC at dlc=16 imports, validates clean
+    against the new com.message-dlc-valid rule (fd:true + dlc=16 is in
+    the allowed set), and the auto-derived CanIf PDUs carry fd:true so
+    the intent survives the Com → CanIf hop. See
+    docs/CANFD_FEASIBILITY.md §2.6, §4.1."""
+    from engine import validate
+
+    project = import_dbc_file(FD_PAYLOAD_DBC, network_name="CAN0", me="AS")
+    report = validate(project)
+    assert report.ok, [(i.rule, i.message) for i in report.errors]
+    # Tx side should pick up the FD flag from the Com message it was
+    # derived from.
+    tx_pdus = [
+        pdu for net in project.canif.networks for pdu in net.TxPdus
+    ]
+    rx_pdus = [
+        pdu for net in project.canif.networks for pdu in net.RxPdus
+    ]
+    # The DBC names are already in macro-form (FD_TX/FD_RX), so the
+    # derived names don't append a redundant _TX/_RX (see derived_pdu_name
+    # in engine/derive.py).
+    assert any(p.name == "CAN0_FD_TX" and p.fd is True for p in tx_pdus), tx_pdus
+    assert any(p.name == "CAN0_FD_RX" and p.fd is True for p in rx_pdus), rx_pdus
 
 
 # --- import_dbc_file ------------------------------------------------

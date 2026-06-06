@@ -112,13 +112,20 @@ def derive_canif_pdu_for_com_message(
 
     `up` is "PduR" because Com messages reach CanIf through PduR
     routing.
+
+    The `fd` flag is carried through when set on the Com message so the
+    CanIf entry reflects the same frame format the importer derived
+    from the DBC.
     """
-    return {
+    entry: dict[str, Any] = {
         "name": derived_pdu_name(message, network),
         "id": message.id,
         "hoh": hoh,
         "up": "PduR",
     }
+    if message.fd:
+        entry["fd"] = True
+    return entry
 
 
 def derive_pdur_routine_for_com_message(

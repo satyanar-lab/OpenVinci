@@ -75,6 +75,11 @@
         "id": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
         "hoh": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "mask": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
+        "fd": {
+          "type": "boolean",
+          "default": false,
+          "description": "CAN FD frame marker. Mirrors the Com.message.fd flag derived from the DBC. The upstream CanIf generator (vendor/as/tools/generator/CanIf.py:115) masks canids with 0x1FFFFFFF and drops the upstream FD bit; this field preserves the intent at the config level. See docs/CANFD_FEASIBILITY.md §2.6, §4.2."
+        },
         "up": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/BSWModule" }
       }
     },
@@ -87,6 +92,11 @@
         "id": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/HexString" },
         "hoh": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "dynamic": { "type": "boolean", "default": false },
+        "fd": {
+          "type": "boolean",
+          "default": false,
+          "description": "CAN FD frame marker. Mirrors the Com.message.fd flag derived from the DBC. The upstream CanIf generator (vendor/as/tools/generator/CanIf.py:115) masks canids with 0x1FFFFFFF and drops the upstream FD bit; this field preserves the intent at the config level. See docs/CANFD_FEASIBILITY.md §2.6, §4.2."
+        },
         "up": { "$ref": "https://openvinci.dev/schema/shared/types.json#/$defs/BSWModule" }
       }
     }
