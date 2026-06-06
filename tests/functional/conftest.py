@@ -41,6 +41,8 @@ NODE_BIN = BUILD_DIR / "openvinci_node"
 NODE_GEN_DIR = BUILD_DIR / "com-minimal"
 FD_NODE_BIN = BUILD_DIR / "openvinci_fd_node"
 FD_NODE_GEN_DIR = BUILD_DIR / "canfd-minimal"
+TP_NODE_BIN = BUILD_DIR / "openvinci_tp_node"
+TP_NODE_GEN_DIR = BUILD_DIR / "cantp-iso15765"
 NODE_SRC_DIR = Path(__file__).parent / "node"
 
 
@@ -108,18 +110,15 @@ def broker_binary(opt_in) -> Path:  # noqa: ARG001 (opt_in is a gate)
 
 # --- node (real COM-stack-linked) -------------------------------------
 
-# Upstream BSW sources we link. The Com / CanIf / PduR / mcal-Can files
-# are the production stack; the simulator Can driver + canlib + the
-# TCP simulator backend give us the wire layer that talks to the
-# broker; std_timer + std_bit + mempool + critical + Log/PAL are the
-# infrastructure those modules pull in. We intentionally don't link
-# Dcm / NM / Xcp / SecOC — com-minimal doesn't reference them and
+# Shared upstream BSW sources every functional node links. The
+# simulator Can driver + canlib + the TCP simulator backend give us
+# the wire layer that talks to the broker; std_timer + std_bit +
+# mempool + critical + Log/PAL are the infrastructure those modules
+# pull in. We intentionally don't link Dcm / NM / Xcp / SecOC —
 # they'd pull crypto / lua we can't fetch.
-_NODE_C_SRC_REL: tuple[str, ...] = (
-    "infras/communication/Com/Com.c",
+_NODE_BASE_C_SRC_REL: tuple[str, ...] = (
     "infras/communication/CanIf/CanIf.c",
     "infras/communication/PduR/PduR.c",
-    "infras/communication/PduR/PduR_Com.c",
     "infras/communication/PduR/PduR_CanIf.c",
     "infras/mcal/Can/Can.c",
     "infras/libraries/stdbit/src/std_bit.c",
@@ -144,6 +143,7 @@ _NODE_INCLUDE_REL: tuple[str, ...] = (
     "infras/mcal/Can",
     "infras/communication/Com",
     "infras/communication/CanIf",
+    "infras/communication/CanTp",
     "infras/communication/PduR",
     "infras/communication/E2E",
     "infras/communication/TcpIp",
@@ -153,6 +153,17 @@ _NODE_INCLUDE_REL: tuple[str, ...] = (
     "tools/libraries/Can/src",
     "tools/libraries/utils/include",
     "app/platform/simulator/src/config",
+)
+
+# Per-stack add-on C sources (each row says "if you USE_X, also link
+# these"). Kept here so adding the next module is one line.
+_NODE_COM_C_SRC_REL: tuple[str, ...] = (
+    "infras/communication/Com/Com.c",
+    "infras/communication/PduR/PduR_Com.c",
+)
+_NODE_CANTP_C_SRC_REL: tuple[str, ...] = (
+    "infras/communication/CanTp/CanTp.c",
+    "infras/communication/PduR/PduR_CanTp.c",
 )
 
 
@@ -171,6 +182,7 @@ def node_binary(opt_in, broker_binary) -> Path:  # noqa: ARG001 (opt_in is a gat
         node_main_filename="node_main.c",
         bin_path=NODE_BIN,
         build_log_name="node-build.log",
+        use_com=True,
     )
 
 
@@ -190,6 +202,33 @@ def fd_node_binary(opt_in, broker_binary) -> Path:  # noqa: ARG001 (opt_in is a 
         node_main_filename="node_fd_main.c",
         bin_path=FD_NODE_BIN,
         build_log_name="fd-node-build.log",
+        use_com=True,
+    )
+
+
+@pytest.fixture(scope="session")
+def tp_node_binary(opt_in, broker_binary) -> Path:  # noqa: ARG001 (opt_in is a gate)
+    """Build the CanTp (ISO-15765) node from examples/cantp-iso15765.
+
+    No Com module — diagnostic transport only. node_tp_main.c
+    initializes (Can, CanIf, PduR, CanTp), brings up the controller,
+    and pumps the main functions in the order
+    `vendor/as/app/bootloader/main.c:111-120` uses. The
+    `node_tp_sink.c` provides the Dcm upper-layer API symbols the
+    upstream PduR generator binds against (StartOfReception,
+    CopyRxData, TpRxIndication, CopyTxData, TpTxConfirmation) — it
+    does NOT implement segmentation; all SF/FF/FC/CF logic lives in
+    the upstream CanTp.c we link.
+    """
+    return _build_node_binary(
+        example_name="cantp-iso15765",
+        gen_dir_root=TP_NODE_GEN_DIR,
+        node_main_filename="node_tp_main.c",
+        bin_path=TP_NODE_BIN,
+        build_log_name="tp-node-build.log",
+        use_com=False,
+        use_cantp=True,
+        extra_local_sources=("node_tp_sink.c",),
     )
 
 
@@ -200,31 +239,52 @@ def _build_node_binary(
     node_main_filename: str,
     bin_path: Path,
     build_log_name: str,
+    use_com: bool = True,
+    use_cantp: bool = False,
+    extra_local_sources: tuple[str, ...] = (),
 ) -> Path:
     """Stage an example, run the generators, gcc-link the resulting
     `*_Cfg.c` with the chosen node main + the shared BSW sources.
+
+    Per-stack tweaks:
+    - `use_com`   adds Com.c + PduR_Com.c and `-DUSE_COM`.
+    - `use_cantp` adds CanTp.c + PduR_CanTp.c and `-DUSE_CANTP`.
+    - `extra_local_sources` lists additional `tests/functional/node/`
+      `.c` files to link (e.g. the Dcm sink for the TP node).
 
     Returns the binary path; skips the calling test cleanly (with the
     build log captured) if any step fails.
     """
     node_main_src = NODE_SRC_DIR / node_main_filename
     node_glue_src = NODE_SRC_DIR / "node_glue.c"
-    if bin_path.is_file() and _node_inputs_unchanged(
-        bin_path, [node_main_src, node_glue_src]
-    ):
+    extra_local_paths = [NODE_SRC_DIR / name for name in extra_local_sources]
+    cached_inputs = [node_main_src, node_glue_src] + extra_local_paths
+    if bin_path.is_file() and _node_inputs_unchanged(bin_path, cached_inputs):
         return bin_path
 
     gen_dir_root.mkdir(parents=True, exist_ok=True)
     _stage_and_generate(example_name, gen_dir_root)
-    gen_dir = gen_dir_root / "config" / "Com" / "GEN"
 
-    sources_c = [VENDOR_AS / rel for rel in _NODE_C_SRC_REL] + [
-        gen_dir / "Com_Cfg.c",
-        gen_dir / "CanIf_Cfg.c",
-        gen_dir / "PduR_Cfg.c",
-        node_main_src,
-        node_glue_src,
-    ]
+    base_c = list(_NODE_BASE_C_SRC_REL)
+    if use_com:
+        base_c.extend(_NODE_COM_C_SRC_REL)
+    if use_cantp:
+        base_c.extend(_NODE_CANTP_C_SRC_REL)
+
+    # Pick up every generated `*_Cfg.c` the upstream generator wrote
+    # — the gen dirs differ per module (Com/GEN vs CanTp/GEN).
+    gen_cfg_sources = sorted(gen_dir_root.rglob("*_Cfg.c"))
+    if not gen_cfg_sources:
+        pytest.skip(
+            f"{example_name}: generator produced no *_Cfg.c under {gen_dir_root}"
+        )
+
+    sources_c = (
+        [VENDOR_AS / rel for rel in base_c]
+        + gen_cfg_sources
+        + [node_main_src, node_glue_src]
+        + extra_local_paths
+    )
     sources_cpp = [VENDOR_AS / rel for rel in _NODE_CPP_SRC_REL]
     for src in sources_c + sources_cpp:
         if not src.is_file():
@@ -238,12 +298,20 @@ def _build_node_binary(
         "-DUSE_STD_PRINTF",
         "-DUSE_CAN",
         "-DUSE_CANIF",
-        "-DUSE_COM",
         "-DUSE_PDUR",
     ]
+    if use_com:
+        cmd.append("-DUSE_COM")
+    if use_cantp:
+        cmd.append("-DUSE_CANTP")
     for rel in _NODE_INCLUDE_REL:
         cmd.append(f"-I{VENDOR_AS / rel}")
-    cmd.append(f"-I{gen_dir}")
+    # All generator output dirs plus any per-example `include/` shim
+    # (e.g. cantp-iso15765 ships a tiny Dcm_Cfg.h there).
+    for d in sorted(gen_dir_root.rglob("GEN")):
+        cmd.append(f"-I{d}")
+    for d in sorted(gen_dir_root.rglob("include")):
+        cmd.append(f"-I{d}")
     for src in sources_c:
         cmd += ["-x", "c", str(src)]
     for src in sources_cpp:
@@ -272,11 +340,21 @@ def _stage_and_generate(example_name: str, dst: Path) -> None:
         shutil.rmtree(dst)
     shutil.copytree(src, dst)
 
-    cfgs = [
-        str(dst / "config" / "Com" / "Com.json"),
-        str(dst / "config" / "Com" / "CanIf.json"),
-        str(dst / "config" / "Com" / "PduR.json"),
+    # Every recognised module JSON the upstream generator can consume.
+    # cantp-iso15765 has no Com.json, com-minimal has no CanTp.json —
+    # we just pass whichever ones exist.
+    candidate_cfgs = [
+        dst / "config" / "Com" / "Com.json",
+        dst / "config" / "Com" / "CanIf.json",
+        dst / "config" / "Com" / "PduR.json",
+        dst / "config" / "CanTp" / "CanTp.json",
     ]
+    cfgs = [str(p) for p in candidate_cfgs if p.is_file()]
+    if not cfgs:
+        raise RuntimeError(
+            f"no recognised module JSONs under {dst}; expected at least one of "
+            f"{[p.name for p in candidate_cfgs]}"
+        )
     tools = str(VENDOR_AS / "tools")
     if tools not in sys.path:
         sys.path.insert(0, tools)
@@ -386,3 +464,76 @@ def connect_node(bus: int) -> socket.socket:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect(("127.0.0.1", 8000 + bus))
     return s
+
+
+# --- ISO-15765 frame helpers ------------------------------------------
+#
+# Minimal encoders for the classic-CAN (LL_DL=8) PCI byte layout.
+# Used by TestCanTpLoopback to act as the ISO-TP peer (the
+# segmentation / reassembly itself lives in upstream CanTp.c).
+#
+# Frame layout (per ISO 15765-2):
+#   SF: PCI=0x0L (L=length), data[0..L-1]
+#   FF: PCI hi nibble=1, low nibble + next byte = 12-bit total length
+#   CF: PCI hi nibble=2, low nibble = sequence number (1..15, wraps to 0)
+#   FC: PCI hi nibble=3, low nibble = FS (0=CTS), then BS, then STmin
+
+
+def isotp_single_frame(data: bytes, *, padding: int = 0xCC) -> bytes:
+    if len(data) > 7:
+        raise ValueError("SF payload must be <= 7 bytes on classic CAN")
+    out = bytearray([len(data) & 0x0F])
+    out.extend(data)
+    while len(out) < 8:
+        out.append(padding)
+    return bytes(out)
+
+
+def isotp_first_frame(total_length: int, data6: bytes, *, padding: int = 0xCC) -> bytes:
+    if total_length > 0xFFF:
+        raise ValueError("FF length must fit in 12 bits (escape not supported here)")
+    if len(data6) != 6:
+        raise ValueError("classic-CAN FF carries exactly 6 payload bytes")
+    out = bytearray(
+        [
+            0x10 | ((total_length >> 8) & 0x0F),
+            total_length & 0xFF,
+        ]
+    )
+    out.extend(data6)
+    while len(out) < 8:
+        out.append(padding)
+    return bytes(out)
+
+
+def isotp_consecutive_frame(
+    sequence_number: int, payload: bytes, *, padding: int = 0xCC
+) -> bytes:
+    if not 0 <= sequence_number <= 15:
+        raise ValueError("CF SN is 4 bits (0..15)")
+    if len(payload) > 7:
+        raise ValueError("CF payload <= 7 bytes on classic CAN")
+    out = bytearray([0x20 | (sequence_number & 0x0F)])
+    out.extend(payload)
+    while len(out) < 8:
+        out.append(padding)
+    return bytes(out)
+
+
+def isotp_flow_control(
+    flow_status: int = 0, *, block_size: int = 0, st_min: int = 0, padding: int = 0xCC
+) -> bytes:
+    """Flow Control. flow_status: 0=CTS, 1=Wait, 2=Overflow."""
+    out = bytearray([0x30 | (flow_status & 0x0F), block_size & 0xFF, st_min & 0xFF])
+    while len(out) < 8:
+        out.append(padding)
+    return bytes(out)
+
+
+def isotp_parse_pci(payload: bytes) -> tuple[str, int]:
+    """Return ("SF"|"FF"|"CF"|"FC"|"?", low-nibble value)."""
+    if not payload:
+        return "?", 0
+    pci_hi = payload[0] >> 4
+    pci_lo = payload[0] & 0x0F
+    return {0: "SF", 1: "FF", 2: "CF", 3: "FC"}.get(pci_hi, "?"), pci_lo
