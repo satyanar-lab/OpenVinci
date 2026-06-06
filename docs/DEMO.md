@@ -31,6 +31,11 @@ The sample DBC declares two messages (`STATUS` sent by `AS`,
 importer parses them with `cantools`, maps them onto Com IPDUs +
 signals, and uses the engine's derivation functions to auto-wire:
 
+> **Want a real DBC instead?** `examples/dbc/` ships 10 more
+> (motohawk, foobar, j1939, vehicle, socialledge, plus real
+> Subaru/Honda/Toyota fragments from `opendbc`). All 10 import,
+> validate, and L1-compile cleanly — see `examples/dbc/README.md`.
+
 - a Can controller for `CAN0`,
 - CanIf Rx/Tx PDUs (`CAN0_STATUS_TX`, `CAN0_HEARTBEAT_RX` — the
   upstream `<Network>_<Message>_<TX|RX>` naming convention),

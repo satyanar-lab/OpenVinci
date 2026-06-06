@@ -19,6 +19,7 @@ from .derive import (
     derive_pdur_routines_from_com,
     derived_pdu_name,
     message_direction,
+    to_macro,
 )
 from .project import (
     Project,
@@ -49,6 +50,7 @@ __all__ = [
     "empty_project",
     "load_project",
     "message_direction",
+    "to_macro",
     "project_from_raw",
     "solve_all",
     "validate",

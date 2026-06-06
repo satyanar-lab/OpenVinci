@@ -53,8 +53,8 @@ make dev                      # backend :8000, frontend :5173 (Ctrl+C kills both
 Open <http://localhost:5173>. The UI loads `examples/com-minimal` by
 default. Try:
 
-1. **Import DBC** → pick `examples/dbc/sample.dbc`, click Import.
-   Watch the tree fill in.
+1. **Import DBC** → drop any of the 11 DBCs in `examples/dbc/` onto
+   the drop zone (or pick a bundled one). Watch the tree fill in.
 2. Select a Com signal in the tree; edit `factor` or `offset`.
 3. **Generate** → see a green compile status with file list.
 4. Open the **Problems** panel after a deliberate break (e.g. delete
@@ -79,7 +79,8 @@ model/             JSON Schemas for each `class` (Can, CanIf, CanTp,
 examples/          Real autoas/as configs used as fixtures.
   canapp-min/      Mirror of vendor/as/app/app/config (round-trip fixture).
   com-minimal/     Minimal generate+compile-clean project (L1/L3 fixture).
-  dbc/             Sample CAN .dbc the importer can ingest.
+  dbc/             Sample DBCs — synthetic + curated subsets of
+                   cantools and opendbc (MIT). See examples/dbc/README.md.
 tests/
   functional/      VERIFICATION LEVEL 2 — pytest + vendor/as CAN broker.
   golden/          VERIFICATION LEVEL 3 — snapshot regression.
@@ -108,7 +109,7 @@ see the disclaimer below.
 
 | Level | Test target | Concrete claim |
 |------|---|---|
-| **L1 validate** | `make test-backend` | Every example loads through the typed model, round-trips serializer ↔ JSON without drift, validates against the Layer-1 JSON Schemas (Draft 2020-12), and passes every engine rule (cross-module reference integrity, multiplicity, type/range). 134 tests. |
+| **L1 validate** | `make test-backend` | Every example loads through the typed model, round-trips serializer ↔ JSON without drift, validates against the Layer-1 JSON Schemas (Draft 2020-12), and passes every engine rule (cross-module reference integrity, multiplicity, type/range). The DBC matrix (`test_dbc_matrix.py`) parametrizes over every file in `examples/dbc/` — parse → import → validate → generate+compile, ~190 tests in total. |
 | **L1 generate+compile** | `pytest backend/tests/test_gen_pipeline.py` | The upstream `vendor/as` generators emit `*_Cfg.{h,c}` from our project that parses cleanly with `gcc -c -fsyntax-only -Wall` against the BSW headers in `vendor/as/infras/communication/`. Catches syntax errors, type mismatches with the BSW, missing struct fields, missing includes. |
 | **L2 functional loopback** | `make test-functional` | `vendor/as`'s `can_simulator` broker — the same TCP wire protocol the simulator-platform `Can.cpp` driver speaks at runtime — comes up, accepts clients, and transports frames byte-exact between peers. Combined with L1, this means the configs OpenVinci emits are valid C for a driver that, at runtime, actually moves data. |
 | **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
