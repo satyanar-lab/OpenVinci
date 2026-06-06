@@ -30,6 +30,7 @@ import type {
   ValidationReport,
 } from "./types";
 import { buildTree, findNodeById } from "./treeModel";
+import { rollupIssues } from "./validationRollup";
 
 type Theme = "light" | "dark";
 
@@ -111,6 +112,10 @@ export function App() {
     () => (selectedId ? findNodeById(tree, selectedId) : null),
     [tree, selectedId],
   );
+  const issueRollup = useMemo(
+    () => rollupIssues(tree, validation?.issues ?? []),
+    [tree, validation],
+  );
 
   function selectIssue(issue: Issue) {
     if (!project) return;
@@ -169,6 +174,7 @@ export function App() {
               nodes={tree}
               selectedId={selectedId}
               onSelect={(n: TreeNode) => setSelectedId(n.id)}
+              rollup={issueRollup}
             />
           ) : (
             <p className="hint">Loading…</p>
@@ -180,6 +186,7 @@ export function App() {
               node={selectedNode}
               project={project}
               schemas={schemas}
+              validation={validation}
               onChange={setProject}
             />
           ) : (

@@ -384,6 +384,7 @@ pre,
   padding: 0;
 }
 .tree-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -398,37 +399,93 @@ pre,
 .tree-row.selected {
   background: var(--bg-selected);
 }
+.tree-row.selected .tree-label {
+  color: var(--fg-strong);
+}
+.tree-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+/* Vertical indentation guide rails — one per depth level. */
+.tree-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  opacity: 0.55;
+}
 .tree-twisty {
   width: 14px;
   color: var(--fg-dim);
-  text-align: center;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
+}
+.tree-twisty .tree-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--fg-faint);
 }
 .tree-label {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  min-width: 0;
 }
 .tree-label .label-text {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tree-label.kind-module {
   font-weight: 600;
 }
+.tree-label.kind-module .label-text {
+  color: var(--fg-strong);
+}
 .tree-label.kind-container {
   color: var(--fg-dim);
-  font-style: italic;
 }
 .tree-label.kind-item .label-text {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
 }
+.kind-icon.module { color: var(--accent); }
+.kind-icon.container { color: var(--fg-dim); }
+.kind-icon.item { color: var(--fg-faint); }
 
-/* === Editor ========================================================= */
+/* Severity rollup badge on tree rows. */
+.tree-sev {
+  margin-left: auto;
+  margin-right: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  flex: 0 0 auto;
+}
+.tree-sev-err {
+  color: var(--sev-error);
+}
+.tree-sev-warn {
+  color: var(--sev-warn);
+}
+.tree-row.selected .tree-sev {
+  color: inherit;
+}
+
+/* === Editor (property grid) ========================================= */
 .editor h2 {
   margin: 0 0 var(--space-2) 0;
   font-size: var(--fs-lg);
@@ -449,6 +506,9 @@ pre,
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
+.editor h2 .title-text {
+  font-family: var(--font-mono);
+}
 .editor .hint {
   color: var(--fg-dim);
   margin: 0 0 var(--space-2) 0;
@@ -457,31 +517,148 @@ pre,
   padding: var(--space-4) var(--space-5);
   color: var(--fg-dim);
 }
+
+/* Section header band per group. */
+.property-grid .prop-group + .prop-group {
+  margin-top: var(--space-4);
+}
+.prop-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-2);
+  margin: 0 0 4px 0;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-2);
+  border-left: 2px solid var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-dim);
+}
+.prop-group-header .prop-group-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
 .fields {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 .fields th {
-  width: 200px;
+  width: 180px;
   text-align: left;
   vertical-align: top;
-  padding: 4px var(--space-3) 4px 0;
+  padding: 5px var(--space-3) 5px var(--space-2);
   font-weight: 500;
   color: var(--fg-dim);
 }
 .fields td {
   padding: 4px 0;
+  vertical-align: middle;
 }
 .fields td input,
 .fields td select {
-  width: 360px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 360px;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
 }
 .fields td .readonly {
   color: var(--fg-dim);
   font-family: var(--font-mono);
+}
+
+.property-row td.prop-input {
+  width: auto;
+}
+.property-row td.prop-hint {
+  width: 180px;
+  padding: 4px var(--space-3);
+  color: var(--fg-faint);
+}
+.property-row td.prop-issue {
+  width: 32px;
+  text-align: right;
+  padding-right: var(--space-2);
+}
+.property-row.row-error th,
+.property-row.row-error td.prop-input {
+  background: linear-gradient(
+    to right,
+    var(--sev-error-bg) 0%,
+    var(--sev-error-bg) 4px,
+    transparent 4px,
+    transparent 100%
+  );
+}
+.property-row.row-warning th,
+.property-row.row-warning td.prop-input {
+  background: linear-gradient(
+    to right,
+    var(--sev-warn-bg) 0%,
+    var(--sev-warn-bg) 4px,
+    transparent 4px,
+    transparent 100%
+  );
+}
+.prop-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--fg);
+}
+.prop-name .prop-desc {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-faint);
+  cursor: help;
+}
+.type-hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+.field-marker {
+  display: inline-flex;
+  align-items: center;
+  cursor: help;
+  margin-left: 4px;
+}
+.field-marker.sev-error { color: var(--sev-error); }
+.field-marker.sev-warning { color: var(--sev-warn); }
+
+/* Number-input adornment + reference combobox. */
+.num-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 360px;
+}
+.num-input .num-prefix {
+  color: var(--fg-faint);
+  flex: 0 0 auto;
+}
+.num-input input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.combobox {
+  display: inline-block;
+  width: 100%;
+  max-width: 360px;
+}
+.combobox input {
+  width: 100%;
 }
 
 /* === Problems panel ================================================= */
