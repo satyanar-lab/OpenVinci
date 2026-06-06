@@ -14,6 +14,11 @@ dist/
 .vite/
 *.log
 
+# Frontend TS build outputs (incremental cache + emitted config)
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+
 # Editor / OS
 .DS_Store
 .idea/

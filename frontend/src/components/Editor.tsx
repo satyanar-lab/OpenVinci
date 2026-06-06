@@ -114,7 +114,6 @@ function Field({
   name,
   value,
   fieldSchema,
-  rootSchema,
   node,
   project,
   onChange,
@@ -122,6 +121,9 @@ function Field({
   name: string;
   value: unknown;
   fieldSchema: JSONSchema;
+  // rootSchema is forwarded from the parent for future cross-schema
+  // resolution but no Field branch needs it today; omit from the
+  // destructure to keep `noUnusedParameters` happy.
   rootSchema: JSONSchema;
   node: TreeNode;
   project: ProjectRaw;

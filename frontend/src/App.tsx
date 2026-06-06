@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  CircleAlert,
+  Moon,
+  Network,
+  Play,
+  Sun,
+  Upload,
+  Wrench,
+} from "lucide-react";
+import {
   applyFix,
   fetchSchemas,
   getProject,
   listProjects,
   validateProject,
 } from "./api";
+import { Breadcrumb } from "./components/Breadcrumb";
 import { Editor } from "./components/Editor";
 import { GenerateModal } from "./components/GenerateModal";
 import { ImportDbcModal } from "./components/ImportDbcModal";
 import { ProblemsPanel } from "./components/ProblemsPanel";
+import { StatusBar } from "./components/StatusBar";
 import { Tree } from "./components/Tree";
 import type {
   Issue,
@@ -19,6 +30,8 @@ import type {
   ValidationReport,
 } from "./types";
 import { buildTree, findNodeById } from "./treeModel";
+
+type Theme = "light" | "dark";
 
 export function App() {
   const [schemas, setSchemas] = useState<SchemaBundle | null>(null);
@@ -31,9 +44,20 @@ export function App() {
   const [validating, setValidating] = useState<boolean>(false);
   const [showImport, setShowImport] = useState<boolean>(false);
   const [showGenerate, setShowGenerate] = useState<boolean>(false);
+  const [lastGenStatus, setLastGenStatus] = useState<"ok" | "errors" | null>(
+    null,
+  );
+  const [theme, setTheme] = useState<Theme>("light");
   const [error, setError] = useState<string | null>(null);
 
-  // Bootstrap: fetch schemas + project list + initial project (com-minimal)
+  // Apply theme to <html data-theme> so the CSS variables pick it up.
+  // Persisting across sessions would need localStorage — not used here
+  // per the environment constraint; theme resets to light on reload.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  // Bootstrap: fetch schemas + project list + initial project (com-minimal).
   useEffect(() => {
     Promise.all([fetchSchemas(), listProjects()])
       .then(([s, list]) => {
@@ -53,6 +77,7 @@ export function App() {
       setSourceProject(name);
       setProject(r.project);
       setSelectedId(null);
+      setLastGenStatus(null);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -62,21 +87,18 @@ export function App() {
   // Re-validate whenever the project changes. Debounced lightly so the
   // user can type into a field without spamming the backend.
   const validationGen = useRef(0);
-  const revalidate = useCallback(
-    async (p: ProjectRaw) => {
-      const gen = ++validationGen.current;
-      setValidating(true);
-      try {
-        const report = await validateProject(p);
-        if (gen === validationGen.current) setValidation(report);
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        if (gen === validationGen.current) setValidating(false);
-      }
-    },
-    [],
-  );
+  const revalidate = useCallback(async (p: ProjectRaw) => {
+    const gen = ++validationGen.current;
+    setValidating(true);
+    try {
+      const report = await validateProject(p);
+      if (gen === validationGen.current) setValidation(report);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      if (gen === validationGen.current) setValidating(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!project) return;
@@ -91,7 +113,6 @@ export function App() {
   );
 
   function selectIssue(issue: Issue) {
-    // Find the closest tree node matching this issue's pointer path.
     if (!project) return;
     let candidateId: string | null = issue.module;
     const path = [...issue.path];
@@ -119,30 +140,21 @@ export function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <span className="brand">OpenVinci</span>
-        <select
-          value={projectName ?? ""}
-          onChange={(e) => loadProject(e.target.value)}
-          aria-label="project"
-        >
-          {projects.length === 0 && <option value="">— loading —</option>}
-          {projects.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <span className="spacer" />
-        <button onClick={() => setShowImport(true)}>Import DBC</button>
-        <button
-          className="primary"
-          onClick={() => setShowGenerate(true)}
-          disabled={!project}
-        >
-          Generate
-        </button>
-      </header>
+      <TopBar
+        projectName={projectName}
+        projects={projects}
+        onSelectProject={loadProject}
+        onImport={() => setShowImport(true)}
+        onGenerate={() => setShowGenerate(true)}
+        onValidate={() => project && void revalidate(project)}
+        canGenerate={!!project}
+        canValidate={!!project}
+        validating={validating}
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
+        tree={tree}
+        selectedId={selectedId}
+      />
 
       {error && (
         <div className="banner error" onClick={() => setError(null)}>
@@ -156,7 +168,7 @@ export function App() {
             <Tree
               nodes={tree}
               selectedId={selectedId}
-              onSelect={(n) => setSelectedId(n.id)}
+              onSelect={(n: TreeNode) => setSelectedId(n.id)}
             />
           ) : (
             <p className="hint">Loading…</p>
@@ -183,6 +195,14 @@ export function App() {
         onSelect={selectIssue}
       />
 
+      <StatusBar
+        projectName={projectName}
+        validation={validation}
+        validating={validating}
+        lastGenStatus={lastGenStatus}
+        project={project}
+      />
+
       {showImport && (
         <ImportDbcModal
           onClose={() => setShowImport(false)}
@@ -192,7 +212,6 @@ export function App() {
             setSourceProject(undefined);
             setSelectedId(null);
             setShowImport(false);
-            // r already contains a validation result — use it directly
             setValidation(r.validation);
           }}
         />
@@ -203,8 +222,119 @@ export function App() {
           project={project}
           sourceProject={sourceProject}
           onClose={() => setShowGenerate(false)}
+          onComplete={(status) => setLastGenStatus(status)}
         />
       )}
     </div>
+  );
+}
+
+// --- TopBar ----------------------------------------------------------
+
+function TopBar({
+  projectName,
+  projects,
+  onSelectProject,
+  onImport,
+  onGenerate,
+  onValidate,
+  canGenerate,
+  canValidate,
+  validating,
+  theme,
+  onToggleTheme,
+  tree,
+  selectedId,
+}: {
+  projectName: string | null;
+  projects: string[];
+  onSelectProject: (name: string) => void;
+  onImport: () => void;
+  onGenerate: () => void;
+  onValidate: () => void;
+  canGenerate: boolean;
+  canValidate: boolean;
+  validating: boolean;
+  theme: Theme;
+  onToggleTheme: () => void;
+  tree: TreeNode[];
+  selectedId: string | null;
+}) {
+  return (
+    <header className="topbar">
+      <div className="group">
+        <span className="brand">
+          <Network size={14} className="logo-mark" aria-hidden />
+          <span>OpenVinci</span>
+        </span>
+      </div>
+
+      <div className="group project-picker">
+        <label htmlFor="project-select">project</label>
+        <select
+          id="project-select"
+          value={projectName ?? ""}
+          onChange={(e) => onSelectProject(e.target.value)}
+          aria-label="project"
+        >
+          {projects.length === 0 && <option value="">— loading —</option>}
+          {projects.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="group">
+        <button
+          className="toolbar-btn"
+          onClick={onImport}
+          title="Import DBC into a new project"
+        >
+          <Upload size={14} aria-hidden />
+          <span className="lbl">Import DBC</span>
+        </button>
+        <button
+          className="toolbar-btn"
+          onClick={onValidate}
+          disabled={!canValidate || validating}
+          title="Re-run engine validation"
+        >
+          {validating ? (
+            <CircleAlert size={14} aria-hidden />
+          ) : (
+            <Wrench size={14} aria-hidden />
+          )}
+          <span className="lbl">Validate</span>
+        </button>
+        <button
+          className="toolbar-btn primary"
+          onClick={onGenerate}
+          disabled={!canGenerate}
+          title="Generate + compile-check the project"
+        >
+          <Play size={14} aria-hidden />
+          <span className="lbl">Generate</span>
+        </button>
+      </div>
+
+      <Breadcrumb tree={tree} selectedId={selectedId} />
+
+      <div className="group">
+        <button
+          className="toolbar-btn theme-toggle"
+          onClick={onToggleTheme}
+          title={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
+          aria-label="toggle theme"
+        >
+          {theme === "light" ? (
+            <Moon size={14} aria-hidden />
+          ) : (
+            <Sun size={14} aria-hidden />
+          )}
+        </button>
+      </div>
+    </header>
   );
 }

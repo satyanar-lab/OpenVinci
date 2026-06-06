@@ -7,10 +7,12 @@ export function GenerateModal({
   project,
   sourceProject,
   onClose,
+  onComplete,
 }: {
   project: ProjectRaw;
   sourceProject: string | undefined;
   onClose: () => void;
+  onComplete?: (status: "ok" | "errors") => void;
 }) {
   const [busy, setBusy] = useState<boolean>(true);
   const [result, setResult] = useState<GenerateResponse | null>(null);
@@ -18,7 +20,13 @@ export function GenerateModal({
 
   useEffect(() => {
     generate(project, sourceProject)
-      .then(setResult)
+      .then((r) => {
+        setResult(r);
+        const status = r.compileResult?.status;
+        if (status === "ok" || status === "errors") {
+          onComplete?.(status);
+        }
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
     // we intentionally don't re-run on changes — the modal is one shot
