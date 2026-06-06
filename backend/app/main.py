@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -8,9 +9,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.model import SUPPORTED_CLASSES, UnknownConfigClassError, dump, load
 from engine import (
@@ -24,9 +27,20 @@ from engine import (
 from gen import generate_and_compile
 from importer import import_dbc_file
 
+log = logging.getLogger("openvinci.backend")
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EXAMPLES = REPO_ROOT / "examples"
 SCHEMAS_DIR = REPO_ROOT / "model"
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
+
+# Conservative body-size ceiling. The two endpoints that take meaningful
+# payloads are /api/generate (a JSON project — typical com-minimal is
+# < 20 KB) and /api/import/dbc/upload (a .dbc — even the largest one we
+# vendor, vehicle.dbc, is < 500 KB). 20 MB is roomy enough that the UI
+# never trips it but tight enough that a hostile peer can't trivially
+# OOM the process before we've added per-endpoint hardening.
+MAX_BODY_BYTES_DEFAULT = 20 * 1024 * 1024
 
 # class -> on-disk path inside a project. Matches what vendor/as expects
 # (docs/AUTOAS_NOTES.md §1.1).
@@ -54,6 +68,54 @@ def _examples_dir() -> Path:
 
 def _schemas_dir() -> Path:
     return Path(os.environ.get("OPENVINCI_SCHEMAS_DIR", SCHEMAS_DIR))
+
+
+def _frontend_dist_dir() -> Path:
+    return Path(os.environ.get("OPENVINCI_FRONTEND_DIST", FRONTEND_DIST))
+
+
+def _max_body_bytes() -> int:
+    raw = os.environ.get("OPENVINCI_MAX_BODY_BYTES")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return MAX_BODY_BYTES_DEFAULT
+
+
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    """Reject requests whose declared Content-Length exceeds the cap.
+
+    A first-line defence ahead of `/api/generate` (shells out to gcc) and
+    `/api/import/dbc/upload` (loads the bytes into cantools). Pure
+    front-door check — for chunked / unknown-size uploads we fall back
+    to a streaming budget while consuming the body in the handler. The
+    declared-length check still rejects the obvious abuse.
+    """
+
+    def __init__(self, app, max_bytes: int) -> None:
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                n = int(cl)
+            except ValueError:
+                n = -1
+            if n > self.max_bytes:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            f"request body exceeds limit "
+                            f"({n} > {self.max_bytes} bytes)"
+                        )
+                    },
+                    status_code=413,
+                )
+        return await call_next(request)
 
 
 def _project_to_raw(project: Project) -> dict[str, dict[str, Any]]:
@@ -104,9 +166,15 @@ class GenerateRequest(BaseModel):
 def create_app() -> FastAPI:
     app = FastAPI(title="OpenVinci backend", version="0.1.0")
 
+    app.add_middleware(MaxBodySizeMiddleware, max_bytes=_max_body_bytes())
+
+    # CORS only matters when the UI is served from a different origin —
+    # i.e. the `npm run dev` flow on :5173 talking to :8000. Once we
+    # ship a single-process build (make build / make run), the UI is
+    # same-origin and this list is moot.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -376,7 +444,74 @@ def create_app() -> FastAPI:
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
+    # --- SPA serve (must register last) -------------------------------
+    #
+    # When `frontend/dist/` exists (i.e. after `make build`), serve the
+    # SPA from the same process:
+    #
+    #   GET /             → dist/index.html
+    #   GET /assets/foo  → dist/assets/foo
+    #   GET /favicon.ico → dist/favicon.ico if present, else 404
+    #   GET /<refresh>   → dist/index.html (so refresh on a deep route
+    #                     hands the SPA back its own router)
+    #   GET /api/junk    → 404 (don't mask unknown API misses as HTML)
+    #
+    # If dist/ is missing (e.g. running uvicorn before `make build`),
+    # the catch-all returns a friendly 503. The dev flow (`make dev`)
+    # remains unaffected because Vite serves the UI on :5173.
+
+    @app.get("/{full_path:path}")
+    async def spa_catch_all(full_path: str):
+        # Don't hide unknown API/schema/health misses behind index.html;
+        # those are real 404s the caller deserves to see.
+        for reserved in ("api/", "schemas/", "schemas", "health"):
+            if full_path == reserved.rstrip("/") or full_path.startswith(reserved):
+                raise HTTPException(
+                    status_code=404, detail=f"unknown route: /{full_path}"
+                )
+
+        dist_dir = _frontend_dist_dir()
+        if not dist_dir.is_dir():
+            return JSONResponse(
+                {
+                    "detail": (
+                        "frontend build missing. Run `make build` (or "
+                        "`make dev` to serve via Vite on :5173)."
+                    )
+                },
+                status_code=503,
+            )
+
+        # Try to serve a real file from dist; fall back to index.html so
+        # client-side routing survives a refresh.
+        target = (dist_dir / full_path).resolve() if full_path else dist_dir
+        dist_resolved = dist_dir.resolve()
+        if full_path and target.is_file() and _is_under(target, dist_resolved):
+            return FileResponse(target)
+
+        index = dist_dir / "index.html"
+        if not index.is_file():
+            return JSONResponse(
+                {"detail": "frontend dist/index.html missing"},
+                status_code=503,
+            )
+        return FileResponse(index)
+
     return app
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    """True iff `path` is inside `root`, after symlink resolution.
+
+    Plain `path.is_relative_to` would do, but we want belt-and-braces
+    safety against `..` segments before resolution: both are passed
+    through Path.resolve() by the caller.
+    """
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 app = create_app()

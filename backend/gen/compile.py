@@ -16,6 +16,7 @@ verification levels 2 and 3, on the roadmap.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -24,6 +25,23 @@ from .types import CompileMessage, CompileResult
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_AS = REPO_ROOT / "vendor" / "as"
+
+# Hard ceiling per gcc invocation. The L1 syntax-only checks complete
+# in well under a second locally; 30 s is comfortably above realistic
+# variance while still preventing a malicious or runaway invocation
+# from pinning the worker. Override with OPENVINCI_GCC_TIMEOUT_S for
+# debugging if you ever need to.
+GCC_TIMEOUT_S_DEFAULT = 30.0
+
+
+def _gcc_timeout_s() -> float:
+    raw = os.environ.get("OPENVINCI_GCC_TIMEOUT_S")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return GCC_TIMEOUT_S_DEFAULT
 
 # Every BSW directory whose headers can show up in generated _Cfg
 # includes. Listed explicitly (rather than auto-discovered) so
@@ -106,10 +124,33 @@ def compile_check(staged_dir: Path, c_files: list[Path]) -> CompileResult:
 
     messages: list[CompileMessage] = []
     any_error = False
+    timeout_s = _gcc_timeout_s()
 
     for c_file in c_files:
         cmd = [*base_cmd, str(c_file)]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout_s
+            )
+        except subprocess.TimeoutExpired:
+            # Treat a timeout as a real compile error so the API caller
+            # sees it in their report rather than getting a 500 or a
+            # hung connection. The error message is parseable enough
+            # for the UI build-log to render.
+            any_error = True
+            messages.append(
+                CompileMessage(
+                    file=str(c_file),
+                    line=None,
+                    column=None,
+                    severity="error",
+                    message=(
+                        f"gcc timed out after {timeout_s:.0f}s — aborted. "
+                        f"Set OPENVINCI_GCC_TIMEOUT_S to override."
+                    ),
+                )
+            )
+            continue
         messages.extend(_parse_diagnostics(proc.stderr))
         if proc.returncode != 0:
             any_error = True

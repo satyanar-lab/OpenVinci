@@ -16,7 +16,7 @@ PYENV := PYTHONPATH= PYTHONNOUSERSITE=1
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8000
 
-.PHONY: help check-submodule install install-backend install-frontend dev test test-backend test-frontend test-functional test-golden verify clean
+.PHONY: help check-submodule install install-backend install-frontend dev build run test test-backend test-frontend test-functional test-golden verify clean
 
 # Hard guard for every target that needs vendor/as. A fresh clone without
 # the submodule used to let L1-gen / L2 / L3 silently skip or fail in
@@ -34,7 +34,9 @@ check-submodule:
 help:
 	@echo "OpenVinci — make targets"
 	@echo "  make install         install backend (Python venv) and frontend (npm) deps"
-	@echo "  make dev             run backend + frontend in one process group (Ctrl+C kills both)"
+	@echo "  make dev             run backend + frontend separately (Vite on :5173, FastAPI on :8000)"
+	@echo "  make build           produce the production frontend bundle in frontend/dist"
+	@echo "  make run             build + serve everything on http://127.0.0.1:8000 (single process)"
 	@echo "  make test            run pytest and vitest (unit tests)"
 	@echo "  make test-functional run the L2 functional loopback (slow, needs gcc)"
 	@echo "  make test-golden     run the L3 golden-file regression"
@@ -56,6 +58,17 @@ dev:
 	$(PYENV) $(UVICORN) --app-dir $(BACKEND) app.main:app --host $(BACKEND_HOST) --port $(BACKEND_PORT) --reload & \
 	cd $(FRONTEND) && npm run dev -- --host 127.0.0.1 & \
 	wait
+
+# Build the production frontend bundle. `frontend/dist/` is where the
+# backend's SPA catch-all looks (FRONTEND_DIST in app/main.py).
+build:
+	cd $(FRONTEND) && npm run build
+
+# Single-process serve: build the SPA, then start uvicorn — same port,
+# same origin, no second dev server. Useful for previewing what
+# end-users see and for any future deploy story.
+run: build
+	$(PYENV) $(UVICORN) --app-dir $(BACKEND) app.main:app --host $(BACKEND_HOST) --port $(BACKEND_PORT)
 
 test: test-backend test-frontend
 
