@@ -16,13 +16,15 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Check out OpenVinci (with vendor/as submodule)
+      - name: Check out OpenVinci (without submodules — done manually next)
         uses: actions/checkout@v4
-        with:
-          # `true` (not `recursive`) — vendor/as itself contains a nested
-          # `app/platform/qemu` submodule without a URL in its .gitmodules
-          # that we don't need.
-          submodules: true
+
+      - name: Init vendor/as only (skip its broken nested submodules)
+        # vendor/as itself declares a nested `app/platform/qemu` submodule
+        # with no URL in its own .gitmodules, which trips both
+        # `submodules: true` and `recursive` in actions/checkout. We only
+        # need vendor/as itself, so init it explicitly without recursion.
+        run: git submodule update --init vendor/as
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
