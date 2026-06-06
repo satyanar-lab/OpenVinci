@@ -98,11 +98,12 @@ Top-level conventions and per-layer notes live in [`CLAUDE.md`](CLAUDE.md).
 
 ## How generated files are verified
 
-OpenVinci ships four verification levels. Each one makes a *specific*
+OpenVinci ships five verification levels. Each one makes a *specific*
 claim. Together they say: the configs OpenVinci emits are
 **structurally valid, syntactically + semantically valid C against the
-BSW headers, byte-stable across regenerations, and run on top of a
-runtime simulator that transports frames byte-exact end-to-end.**
+BSW headers, byte-stable across regenerations, transported byte-exact
+by the runtime simulator, and — when linked into a real node — route
+Com signals end-to-end through the generated CanIf→PduR→Com path.**
 
 That is precisely what they say. It is **not** what they don't say —
 see the disclaimer below.
@@ -111,7 +112,8 @@ see the disclaimer below.
 |------|---|---|
 | **L1 validate** | `make test-backend` | Every example loads through the typed model, round-trips serializer ↔ JSON without drift, validates against the Layer-1 JSON Schemas (Draft 2020-12), and passes every engine rule (cross-module reference integrity, multiplicity, type/range). The DBC matrix (`test_dbc_matrix.py`) parametrizes over every file in `examples/dbc/` — parse → import → validate → generate+compile, ~190 tests in total. |
 | **L1 generate+compile** | `pytest backend/tests/test_gen_pipeline.py` | The upstream `vendor/as` generators emit `*_Cfg.{h,c}` from our project that parses cleanly with `gcc -c -fsyntax-only -Wall` against the BSW headers in `vendor/as/infras/communication/`. Catches syntax errors, type mismatches with the BSW, missing struct fields, missing includes. |
-| **L2 functional loopback** | `make test-functional` | `vendor/as`'s `can_simulator` broker — the same TCP wire protocol the simulator-platform `Can.cpp` driver speaks at runtime — comes up, accepts clients, and transports frames byte-exact between peers. Combined with L1, this means the configs OpenVinci emits are valid C for a driver that, at runtime, actually moves data. |
+| **L2 broker transport** | `make test-functional` (TestBrokerLoopback) | `vendor/as`'s `can_simulator` broker — the same TCP wire protocol the simulator-platform `Can.cpp` driver speaks at runtime — comes up, accepts clients, transports frames byte-exact between peers, and correctly suppresses sender echoes. The wire layer the rest of L2 sits on actually works. |
+| **L2 end-to-end (generated stack)** | `make test-functional` (TestComStackLoopback) | A real node binary is built by gcc-linking our generated `*_Cfg.c` (from `examples/com-minimal`) with the upstream Com / CanIf / PduR / Can MCAL sources plus the simulator Can driver. With that node running: (a) `Com_SendSignal(COM_SID_TxSignal, …)` on the generated config becomes a CAN frame at id `0x100` that the broker routes to a Python listener, and (b) a `0x101` frame the harness injects is decoded by the generated `CanIf → PduR_CanIfRxIndication → PduR_RxIndication → Com_RxIndication` path, and `Com_ReceiveSignal(COM_SID_RxSignal, …)` returns the exact byte the harness sent. The OpenVinci-emitted config wires real data through the upstream stack. |
 | **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
 
 Run them all:
@@ -141,11 +143,16 @@ this carefully:
 - ISO 26262 / ASIL functional-safety claims, AUTOSAR conformance
   certification, MISRA-C compliance audits — none of these are
   exercised by these tests, and none are claimed by the project.
-- A successful L2 loopback says "frames move." It does not say "your
-  Dcm session-control state machine handles 0x10 03 correctly," "your
-  CanNm wake-up signalling is spec-conformant," or "your generated
-  E2E checksums match what the OEM expects." Higher-level
-  verification is on the user.
+- A successful L2 end-to-end says "for this configured PDU, on this
+  configured signal, the generated CanIf→PduR→Com path round-trips a
+  single byte through the upstream BSW on a host simulator." It does
+  not say "your Dcm session-control state machine handles 0x10 03
+  correctly," "your CanNm wake-up signalling is spec-conformant," or
+  "your generated E2E checksums match what the OEM expects." Higher
+  layers (Dcm, CanNm, SecOC, E2E, COM groups, signal gateways, …) are
+  not exercised — not yet linked, not yet verified. Multi-signal,
+  multi-message, and multi-network coverage past `examples/com-minimal`
+  is on the user.
 - The upstream `autoas/as` BSW is itself a study project (see the
   license note above). It is not a tier-1 supplier's
   series-production AUTOSAR stack.
