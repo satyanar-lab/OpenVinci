@@ -58,6 +58,12 @@ vendor/as/download
 vendor/as/doc
 vendor/as/.scons
 
+# hardware/ is the embedded-firmware area (STM32H753ZI cross-build,
+# arm-none-eabi). The web / desktop app never needs it and pulling
+# the CMSIS_5 submodule into the docker context would balloon the
+# build (~150 MB unpacked). Kept strictly separate per PROMPT H1.
+hardware/
+
 # Editors / OS
 .idea/
 .vscode/

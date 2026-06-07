@@ -1,3 +1,9 @@
 [submodule "vendor/as"]
 	path = vendor/as
 	url = https://github.com/autoas/as.git
+[submodule "hardware/stm32h753zi/third_party/cmsis-device-h7"]
+	path = hardware/stm32h753zi/third_party/cmsis-device-h7
+	url = https://github.com/STMicroelectronics/cmsis-device-h7.git
+[submodule "hardware/stm32h753zi/third_party/CMSIS_5"]
+	path = hardware/stm32h753zi/third_party/CMSIS_5
+	url = https://github.com/ARM-software/CMSIS_5.git
