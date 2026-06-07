@@ -2,7 +2,6 @@
  * SSAS - Simple Smart Automotive Software
  * Copyright (C) 2021-2026 Parai Wang <parai@foxmail.com>
  *
- * Generated at Sat Jun  6 20:29:04 2026
  */
 #ifndef COM_CFG_H
 #define COM_CFG_H
@@ -23,7 +22,7 @@
 #define COM_USE_SIGNAL_UPDATE_BIT
 
 #define COM_RX_FOR_CAN0(id, PduInfoPtr) \
-  if (0x101 == id) { \
+  if (0x100 == id) { \
     Com_RxIndication(COM_CAN0_RX_MSG, PduInfoPtr); \
   }
 
@@ -48,7 +47,7 @@
 /* signals for network CAN0 message TX_MSG: id=0x100 dlc=8, dir=TX */
 #define COM_SID_TxSignal 0 /* little 8@0 */
 
-/* signals for network CAN0 message RX_MSG: id=0x101 dlc=8, dir=RX */
+/* signals for network CAN0 message RX_MSG: id=0x100 dlc=8, dir=RX */
 #define COM_SID_RxSignal 1 /* little 8@0 */
 
 

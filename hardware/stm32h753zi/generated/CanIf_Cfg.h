@@ -2,7 +2,6 @@
  * SSAS - Simple Smart Automotive Software
  * Copyright (C) 2021-2026 Parai Wang <parai@foxmail.com>
  *
- * Generated at Sat Jun  6 20:29:04 2026
  */
 #ifndef CANIF_CFG_H
 #define CANIF_CFG_H
@@ -10,7 +9,7 @@
 /* ================================ [ MACROS    ] ============================================== */
 #define CANIF_CHL_CAN0 0u
 
-#define CANIF_CAN0_RX_MSG 0u /* CAN0 id=0x101 */
+#define CANIF_CAN0_RX_MSG 0u /* CAN0 id=0x100 */
 
 #define CANIF_CAN0_TX_MSG 0u /* CAN0 id=0x100 */
 #ifndef CANIF_MAIN_FUNCTION_PERIOD

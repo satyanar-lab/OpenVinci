@@ -2,7 +2,6 @@
  * SSAS - Simple Smart Automotive Software
  * Copyright (C) 2021-2026 Parai Wang <parai@foxmail.com>
  *
- * Generated at Sat Jun  6 20:29:04 2026
  */
 /* ================================ [ INCLUDES  ] ============================================== */
 #include "CanIf.h"
@@ -18,7 +17,7 @@ static const CanIf_RxPduType CanIf_RxPdus_CAN0[] = {
   {
     PduR_CanIfRxIndication,
     PDUR_CAN0_RX_MSG,
-    0x101, /* canid */
+    0x100, /* canid */
     0x1fffffff, /* mask */
     0, /* hoh */
   },

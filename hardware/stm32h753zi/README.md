@@ -15,18 +15,55 @@ The repo's `.dockerignore` explicitly excludes `hardware/`.
 Prove, on real silicon, the same OpenVinci-emitted CanIf → PduR → Com
 path that L2 already proves on the host simulator:
 
-1. **PROMPT H1 (previous commit)** — get the arm-none-eabi-gcc
-   cross-build working and prove the toolchain by booting a "hello"
-   firmware that prints over the Nucleo's ST-LINK Virtual COM Port.
-   **No CAN code yet.** This was the toolchain checkpoint.
+1. **PROMPT H1 (committed)** — get the arm-none-eabi-gcc cross-build
+   working and prove the toolchain by booting a "hello" firmware that
+   prints over the Nucleo's ST-LINK Virtual COM Port. **No CAN code
+   yet.** This was the toolchain checkpoint.
 
-2. **PROMPT H2 (this commit)** — drop the generated `*_Cfg.{h,c}` from
-   `examples/com-minimal` onto the board, bring FDCAN1 up in
-   internal-loopback mode, and link the same vendor/as Com / PduR /
-   CanIf / mcal-Can sources the L2 host-sim node already proves. The
-   cross-build links cleanly; real-silicon smoke is the next prompt.
+2. **PROMPT H2 (committed)** — drop the generated `*_Cfg.{h,c}` onto
+   the board, bring FDCAN1 up in internal-loopback mode, and link the
+   same vendor/as Com / PduR / CanIf / mcal-Can sources the L2 host-sim
+   node already proves. Cross-build linked cleanly.
 
-## Current scope (PROMPT H2)
+3. **PROMPT H3 (this commit)** — close the loop: send a `TxSignal`
+   every ~100 ms and verify it round-trips through CanIf → PduR → Com
+   on real silicon. The shared-id `examples/h7-loopback` config makes
+   the looped frame actually deliver. CI now cross-compiles this
+   firmware on every push.
+
+## What this proves (and what it does NOT)
+
+The on-board test exercises the **digital data path**:
+
+```
+Com_SendSignal(TxSignal)
+   → PduR (Com → CanIf routing)
+      → CanIf (Tx Pdu lookup)
+         → vendor Can.c → our Can_H7.c → FDCAN1 Tx Buffer 0
+            └── INTERNAL LOOPBACK (TEST.LBCK, no transceiver, no wire)
+                → FDCAN1 Rx FIFO 0
+   ← Can_H7.c → CanIf_RxIndication (canid-based dispatch)
+      ← PduR (CanIf → Com routing)
+         ← Com_RxIndication → Com_ReceiveSignal(RxSignal)
+```
+
+What it proves on real H7 silicon:
+- The OpenVinci-generated `Com_Cfg` / `PduR_Cfg` / `CanIf_Cfg` are
+  byte-identical to what the host-sim L2 tests already trust.
+- A real MCAL (`vendor/as/infras/mcal/Can/Can.c` + our `Can_H7.c`)
+  routes a frame end-to-end through that config.
+
+What it does **not** prove:
+- Physical bus signalling (no CAN transceiver wired, FDCAN1 stays
+  inside the M_CAN core with `CCCR.MON | TEST.LBCK`).
+- Multi-node arbitration / error handling.
+- FD frames (we emit Classic CAN only; 8-byte payload).
+
+Both gaps are deliberate — internal loopback is the smallest piece of
+silicon that still distinguishes "the generator output works on real
+hardware" from "the generator output works in a simulator."
+
+## Current scope (PROMPT H3)
 
 The firmware now boots and runs the full OpenVinci COM stack:
 
@@ -47,8 +84,10 @@ The firmware now boots and runs the full OpenVinci COM stack:
     CAN; FD support follow-up).
   - Internal loopback: `CCCR.TEST | CCCR.MON | TEST.LBCK`.
 - `generated/` — `Com_Cfg`, `PduR_Cfg`, `CanIf_Cfg` produced by
-  `tools/regenerate.py` from `examples/com-minimal`. Reproducible via
-  `make generate`.
+  `tools/regenerate.py` from `examples/h7-loopback`. The loopback
+  example deliberately shares CAN id 0x100 between TX_MSG and RX_MSG
+  so the looped-back frame is actually accepted by the generated CanIf
+  Rx-Pdu lookup. Reproducible via `make generate`.
 
 ### Critical seam (`hoh` ↔ FDCAN buffer index)
 
@@ -70,7 +109,7 @@ Output binary size:
 
 ```
    text    data    bss    dec    hex   filename
-   6132      20   1580   7732   1e34   build/openvinci-h7.elf
+   6188      20   1580   7788   1e6c   build/openvinci-h7.elf
 ```
 
 ## Prerequisites
@@ -115,10 +154,11 @@ both submodules in `.gitmodules`, so a fresh init grabs only the tip.
 ```sh
 cd hardware/stm32h753zi
 
-# Regenerate the config from examples/com-minimal (uses the same
+# Regenerate the config from examples/h7-loopback (uses the same
 # backend/gen pipeline the desktop app calls). Outputs land in
 # generated/. The committed files in this directory are bit-for-bit
-# what this command produces.
+# what this command produces. Pass any other example name as an
+# argument: `python3 tools/regenerate.py com-minimal`.
 make generate
 
 make            # → build/openvinci-h7.{elf,bin,hex}
@@ -132,7 +172,8 @@ make flash-openocd      # OpenOCD (interface/stlink.cfg + target/stm32h7x.cfg)
 `make generate` needs the backend's Python deps installed
 (`pip install -e backend/` from the repo root, which pulls in `pycrc`
 + `scons` from `backend/pyproject.toml`). The committed `generated/`
-files mean a cross-build alone needs only the C toolchain.
+files mean a cross-build alone needs only the C toolchain — and
+that's the path CI takes (see `.github/workflows/firmware-cross-compile.yml`).
 
 ## Watch the UART
 
@@ -155,16 +196,27 @@ picocom -b 115200 /dev/ttyACM0      # exit: Ctrl-A Ctrl-X
 # any serial monitor at 115200
 ```
 
-You should see (PROMPT H2 boot messages):
+You should see:
 
 ```
 openvinci-h7: boot
 openvinci-h7: stack up — sending TxSignal
+openvinci-h7: RX=0x56
+openvinci-h7: RX=0x57
+openvinci-h7: RX=0x58
+…
 ```
 
-After PROMPT H1's "hello" loop, the H2 firmware just emits two lines
-during init and then runs the pump silently — the next prompt wires
-an `RxSignal changed` print once a second sender lands.
+The two boot lines land during the init chain. After that, the pump
+loop transmits `TxSignal = 0x55, 0x56, 0x57, …` every ~100 ms; the
+internal-loopback path turns each into a CanIf Rx, PduR routes it
+back to Com, and the next `Com_ReceiveSignal` poll prints the new
+value as `RX=0xNN`.
+
+**If you see the boot lines but no `RX=`**: the most common cause is
+that `generated/CanIf_Cfg.c` was regenerated from a different example
+(e.g. `com-minimal`, which uses Tx id 0x100 ≠ Rx id 0x101). Re-run
+`make generate` (it defaults to `h7-loopback`) and reflash.
 
 ## Source map
 

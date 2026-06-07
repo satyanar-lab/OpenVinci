@@ -1,0 +1,99 @@
+name: firmware-cross-compile
+
+# Proves hardware/stm32h753zi/ still cross-compiles for the H7 target
+# on every push. ONLY a cross-compile — no attempt to run the firmware
+# (CI has no FDCAN silicon, no ST-LINK, no transceiver). The bar is:
+# `make` returns 0 inside hardware/stm32h753zi/ with arm-none-eabi-gcc.
+#
+# This job is intentionally isolated from `verify.yml`:
+#   - Different toolchain (cross-gcc only; no Python/Node deps).
+#   - Different signal (target-build vs host-side L1..L4 verification).
+#   - Different blast radius — a firmware-only edit that breaks here
+#     shouldn't block a "verify" failure investigation, and vice versa.
+
+on:
+  push:
+    branches: [main]
+    # Skip when nothing under the firmware tree (or the BSW it links)
+    # actually changed. The host-verify workflow already covers the
+    # rest. `vendor/as` matters because hardware/stm32h753zi/Makefile
+    # pulls its Com / PduR / CanIf / Can sources straight in.
+    paths:
+      - "hardware/stm32h753zi/**"
+      - "vendor/as/infras/**"
+      - ".github/workflows/firmware-cross-compile.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "hardware/stm32h753zi/**"
+      - "vendor/as/infras/**"
+      - ".github/workflows/firmware-cross-compile.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  cross-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out OpenVinci
+        uses: actions/checkout@v4
+        with:
+          # We need vendor/as + the firmware-local submodules
+          # (cmsis-device-h7, CMSIS_5). `recursive: true` is enough —
+          # we hit the same upstream qemu-gitlink gap verify.yml works
+          # around, so allow this step to soft-fail and then fall
+          # through to an explicit init for the modules we actually
+          # care about.
+          submodules: recursive
+        continue-on-error: true
+
+      - name: Ensure required submodules are initialized
+        run: |
+          # vendor/as: BSW sources the firmware links in.
+          if [ ! -d vendor/as/infras ]; then
+            git submodule update --init vendor/as
+          fi
+          # hardware/stm32h753zi/third_party/{cmsis-device-h7,CMSIS_5}:
+          # device headers + Cortex-M7 core headers + startup_*.s.
+          if [ ! -d hardware/stm32h753zi/third_party/cmsis-device-h7/Include ]; then
+            git submodule update --init \
+              hardware/stm32h753zi/third_party/cmsis-device-h7
+          fi
+          if [ ! -d hardware/stm32h753zi/third_party/CMSIS_5/CMSIS/Core/Include ]; then
+            git submodule update --init \
+              hardware/stm32h753zi/third_party/CMSIS_5
+          fi
+          test -d vendor/as/infras
+          test -f hardware/stm32h753zi/third_party/cmsis-device-h7/Source/Templates/gcc/startup_stm32h753xx.s
+          test -d hardware/stm32h753zi/third_party/CMSIS_5/CMSIS/Core/Include
+
+      - name: Install arm-none-eabi-gcc
+        run: |
+          sudo apt-get update
+          # gcc-arm-none-eabi pulls in libnewlib-arm-none-eabi and
+          # binutils. Same package set the README points users at.
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            binutils-arm-none-eabi
+
+      - name: Show toolchain version
+        run: |
+          arm-none-eabi-gcc --version | head -n 1
+          arm-none-eabi-size --version | head -n 1
+
+      - name: Cross-compile firmware
+        # The committed generated/*.c files mean we don't need the
+        # backend Python deps here — `make` skips straight to gcc.
+        # If those files were ever removed from the tree, this step
+        # would fail with a clear pointer (see Makefile:generated-check).
+        run: |
+          cd hardware/stm32h753zi
+          make
+          # Print the final size summary so flash/RAM growth is visible
+          # in the workflow log without having to download artifacts.
+          make size

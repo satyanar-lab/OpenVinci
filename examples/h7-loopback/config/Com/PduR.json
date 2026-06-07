@@ -1,0 +1,7 @@
+{
+  "class": "PduR",
+  "routines": [
+    { "name": "CAN0_TX_MSG", "from": "Com", "to": "CanIf" },
+    { "name": "CAN0_RX_MSG", "from": "CanIf", "to": "Com" }
+  ]
+}

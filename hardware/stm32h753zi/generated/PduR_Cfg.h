@@ -2,7 +2,6 @@
  * SSAS - Simple Smart Automotive Software
  * Copyright (C) 2021-2026 Parai Wang <parai@foxmail.com>
  *
- * Generated at Sat Jun  6 20:29:04 2026
  */
 #ifndef PDUR_CFG_H
 #define PDUR_CFG_H

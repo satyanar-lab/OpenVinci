@@ -41,6 +41,7 @@ extern void system_init_for_fdcan(void);
 
 static void uart3_init(void);
 static void uart3_puts(const char *s);
+static void uart3_put_rx_hex(uint8_t v);
 static void busy_delay(volatile uint32_t loops);
 
 int main(void)
@@ -93,12 +94,14 @@ int main(void)
 
         if (E_OK == Com_ReceiveSignal(COM_SID_RxSignal, &rx_value)) {
             if (rx_value != rx_value_last) {
-                /* The loopback should make 0x101 echo whatever any
-                 * 0x101 sender on the (internal) bus produced. We
-                 * don't drive 0x101 ourselves yet, so this branch is
-                 * a no-op until a second tx path lands. */
+                /* examples/h7-loopback shares canid 0x100 between TX_MSG
+                 * and RX_MSG, so with FDCAN1 in internal loopback every
+                 * TxSignal we send round-trips and shows up here. The
+                 * print is the visible proof the generated config + real
+                 * MCAL routed the frame all the way through CanIf → PduR
+                 * → Com on real H7 silicon. */
                 rx_value_last = rx_value;
-                uart3_puts("openvinci-h7: RxSignal changed\r\n");
+                uart3_put_rx_hex(rx_value);
             }
         }
 
@@ -137,6 +140,18 @@ static void uart3_puts(const char *s)
     while (*s) {
         uart3_putc(*s++);
     }
+}
+
+/* Emit "RX=0xNN\r\n" for the received signal value. Kept local instead
+ * of pulling in printf — newlib-nano's printf alone is several KB and
+ * we don't need formatted output anywhere else. */
+static void uart3_put_rx_hex(uint8_t v)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    uart3_puts("openvinci-h7: RX=0x");
+    uart3_putc(hex[(v >> 4) & 0x0Fu]);
+    uart3_putc(hex[v & 0x0Fu]);
+    uart3_puts("\r\n");
 }
 
 /* newlib-nano init / fini stubs. */
