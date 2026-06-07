@@ -4,7 +4,9 @@
 # What this builds (PROMPT H2):
 #   - cmsis-device-h7's startup_stm32h753xx.s + system_stm32h7xx.c
 #   - src/main.c        — boot, USART3 heartbeat, AUTOSAR init + pump
-#   - src/Can_Cfg.c     — single-controller config the vendor MCAL reads
+#   - generated/Can_Cfg.c  — single-controller config (PROMPT C2:
+#                            emitted by backend/gen/can_h7.py, no
+#                            longer hand-written)
 #   - src/Can_H7.c      — FDCAN1 backend (CanAc_*, Can_Write, pump)
 #   - src/system_init.c — PLL2Q → 80 MHz FDCAN kernel clock
 #   - generated/*.c     — OpenVinci-generated Com_Cfg / PduR_Cfg / CanIf_Cfg
@@ -132,7 +134,6 @@ LDFLAGS     := $(ARCH_FLAGS) -T$(LDSCRIPT) \
 
 # Sources / objects
 C_SOURCES   := $(SRC_DIR)/main.c \
-               $(SRC_DIR)/Can_Cfg.c \
                $(SRC_DIR)/Can_H7.c \
                $(SRC_DIR)/system_init.c \
                $(SYSTEM_C) \

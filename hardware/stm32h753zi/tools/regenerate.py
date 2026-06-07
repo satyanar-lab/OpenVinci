@@ -36,6 +36,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from engine import load_project  # noqa: E402
+from gen import can_h7  # noqa: E402
 from gen.generate import run_generators  # noqa: E402
 from gen.stage import stage_project  # noqa: E402
 
@@ -91,6 +92,14 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    # Run the OpenVinci STM32H7 FDCAN driver-config generator (PROMPT
+    # C2). Only fires when the project opts in via project.json's
+    # target field. Output lands next to the vendor *_Cfg.* files so
+    # the Makefile's $(wildcard generated/*.c) picks it up too.
+    if can_h7.is_h7_target(example_dir):
+        h7_written = can_h7.generate(project, GENERATED)
+        copied.extend(p.name for p in h7_written)
 
     print(f"wrote {len(copied)} file(s) from examples/{example_name} to {GENERATED}:")
     for name in sorted(copied):

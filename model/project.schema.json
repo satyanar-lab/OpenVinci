@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openvinci.dev/schema/project/v1.json",
+  "title": "Project",
+  "description": "Project-level OpenVinci settings — currently just the board target. Lives at the project ROOT (`project.json`), separate from the per-class vendor/as configs under `config/<Module>/<Module>.json` so the vendor toolchain never sees it. Optional; absent = no board target = the per-target generators (e.g. backend/gen/can_h7.py) skip this project.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "target": {
+      "type": "string",
+      "description": "Identifier for the silicon the MCAL config will be generated against. `stm32h753zi` is the only target with a generator today (backend/gen/can_h7.py). Absent or null = host-only project (the L2 host-sim case).",
+      "enum": ["stm32h753zi"]
+    }
+  }
+}

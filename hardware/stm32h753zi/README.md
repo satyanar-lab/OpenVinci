@@ -73,21 +73,22 @@ The firmware now boots and runs the full OpenVinci COM stack:
   `Can_Init → CanIf_Init → PduR_Init → Com_Init`, then a 1 ms pump loop
   that calls `Com_SendSignal(TxSignal, …)` every ~100 ms and watches
   `Com_ReceiveSignal(RxSignal, …)` for changes.
-- `src/Can_Cfg.{h,c}` — hand-written single-controller config; vendor
-  `Can.c` reads it via `&Can_Config`.
+- `generated/Can_Cfg.{h,c}` — single-controller driver config
+  emitted by `backend/gen/can_h7.py` from the project tree. NBTP,
+  MRAM layout, Rx filters (canid → Hrh), and Tx slots (Hth →
+  buffer index) all come from this table at run-time. Vendor
+  `Can.c` still reads `&Can_Config` from the same file.
 - `src/Can_H7.c` — FDCAN1 backend implementing the `CanAc_*` contract
   from `vendor/as/infras/mcal/Can/Can_Priv.h` plus `Can_Write` and
-  the `Can_MainFunction_Write/Read` pump:
-  - INIT-mode entry/leave, NBTP for 500 kbit/s @ 87.5 % sample.
-  - Message-RAM layout at `SRAMCAN_BASE`: Rx FIFO 0 (3 × 4 words) +
-    one dedicated Tx Buffer (1 × 4 words). 8-byte payload (Classic
-    CAN; FD support follow-up).
-  - Internal loopback: `CCCR.TEST | CCCR.MON | TEST.LBCK`.
-- `generated/` — `Com_Cfg`, `PduR_Cfg`, `CanIf_Cfg` produced by
-  `tools/regenerate.py` from `examples/h7-loopback`. The loopback
-  example deliberately shares CAN id 0x100 between TX_MSG and RX_MSG
-  so the looped-back frame is actually accepted by the generated CanIf
-  Rx-Pdu lookup. Reproducible via `make generate`.
+  the `Can_MainFunction_Write/Read` pump. **Fully table-driven**
+  (PROMPT C1): no message-specific or layout-specific constants live
+  in the .c — everything flows in from `Can_H7_Config`. Internal
+  loopback (`CCCR.TEST | CCCR.MON | TEST.LBCK`) stays on.
+- `generated/{Com,PduR,CanIf}_Cfg.{h,c}` — vendor-generator output
+  from `examples/h7-loopback`. The loopback example deliberately
+  shares CAN id 0x100 between TX_MSG and RX_MSG so the looped frame
+  is actually accepted by the generated CanIf Rx-Pdu lookup.
+  Reproducible via `make generate`.
 
 ### Critical seam (`hoh` ↔ FDCAN buffer index)
 
@@ -97,9 +98,11 @@ The generated `CanIf_Cfg.c` sets every TxPdu / RxPdu `hoh` field to
 | Layer                      | Object         | Value             |
 | -------------------------- | -------------- | ----------------- |
 | Generated CanIf            | `Hth`, `Hrh`   | `0`               |
-| Our `Can_Cfg.c`            | channel 0      | `hwInstanceId 0`  |
-| Our `Can_H7.c` Tx          | `Hth = 0`      | FDCAN1 Tx Buffer 0 |
-| Our `Can_H7.c` Rx          | `Hrh = 0`      | FDCAN1 Rx FIFO 0  |
+| Generated `Can_Cfg.c`      | channel 0      | `hwInstanceId 0`  |
+| Generated `Can_Cfg.c`      | `rxFilters[0]` | `canid=0x100, Hrh=0` |
+| Generated `Can_Cfg.c`      | `txSlots[0]`   | `Hth=0, buffer=0`    |
+| Driver `Can_H7.c` Tx       | `Hth = 0`      | FDCAN1 Tx Buffer 0 |
+| Driver `Can_H7.c` Rx       | `Hrh = 0`      | FDCAN1 Rx FIFO 0  |
 
 On Rx we deliver `Mailbox.Hoh = 0` to `CanIf_RxIndication` so the
 generated CanIf does the same id-based dispatch the L2 host-sim test
@@ -223,10 +226,11 @@ that `generated/CanIf_Cfg.c` was regenerated from a different example
 ```
 src/main.c            boot, USART3 heartbeat, AUTOSAR init + pump
 src/system_init.c     PLL2Q → 80 MHz FDCAN kernel clock
-src/Can_Cfg.c         single-controller config (vendor Can.c reads this)
 src/Can_H7.c          FDCAN1 backend: CanAc_*, Can_Write, pump
-include/Can_Cfg.h     macros + the `hoh` ↔ buffer-index seam, documented
-generated/            *_Cfg.{h,c} produced by `tools/regenerate.py`
+                      (table-driven against Can_H7_Config from C1)
+generated/            All *_Cfg.{h,c} produced by `tools/regenerate.py`:
+                      Com_Cfg / PduR_Cfg / CanIf_Cfg via the vendor
+                      generator, Can_Cfg via backend/gen/can_h7.py.
 tools/regenerate.py   wrapper around backend/gen/{stage,generate}.py
 linker/
   stm32h753xx_flash.ld our linker script (upstream cmsis-device-h7
