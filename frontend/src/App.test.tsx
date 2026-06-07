@@ -384,4 +384,84 @@ describe("App", () => {
       expect(screen.getByText(/not a \.dbc file/i)).toBeInTheDocument(),
     );
   });
+
+  // --- PROMPT C5: target selector --------------------------------------
+
+  it("renders a target selector that defaults to host", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Com")).toBeInTheDocument());
+    const select = screen.getByRole("combobox", { name: /board target/i });
+    expect((select as HTMLSelectElement).value).toBe("host");
+    // STM32 option must exist alongside Host.
+    expect(
+      screen.getByRole("option", { name: /STM32H753ZI/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /Host \(simulation\)/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does NOT show board options while target = host", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Com")).toBeInTheDocument());
+    expect(screen.queryByTestId("board-options")).toBeNull();
+  });
+
+  it("switching to STM32H753ZI surfaces baud + kernel summary", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Com")).toBeInTheDocument());
+    const select = screen.getByRole("combobox", { name: /board target/i });
+    fireEvent.change(select, { target: { value: "stm32h753zi" } });
+    const summary = await screen.findByTestId("board-options");
+    // Kernel clock comes straight from system_init.c — fixed for H7.
+    expect(summary).toHaveTextContent(/80 MHz/);
+    // Baud comes from sampleProject's Com.networks[0].baudrate (500000).
+    expect(summary).toHaveTextContent(/500 kb\/s/);
+  });
+
+  it("clicking Generate after picking STM32H753ZI sends target=stm32h753zi", async () => {
+    // We're checking the actual /api/generate POST body to make sure
+    // the target propagates from the TopBar selector all the way
+    // through GenerateModal → api.generate().
+    let lastBody: Record<string, unknown> | null = null;
+    vi.unstubAllGlobals();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const path = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+        if (path === "/api/generate" && init?.body) {
+          lastBody = JSON.parse(init.body as string);
+          return jsonResponse({
+            project: "com-minimal",
+            files: [],
+            compileResult: null,
+          });
+        }
+        if (path === "/schemas") return jsonResponse(schemas);
+        if (path === "/api/projects")
+          return jsonResponse({ projects: ["com-minimal"] });
+        if (path === "/api/projects/com-minimal")
+          return jsonResponse({ name: "com-minimal", project: sampleProject });
+        if (path === "/api/validate") return jsonResponse(validationOk);
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Com")).toBeInTheDocument());
+    fireEvent.change(
+      screen.getByRole("combobox", { name: /board target/i }),
+      { target: { value: "stm32h753zi" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Generate$/ }));
+
+    await waitFor(() => expect(lastBody).not.toBeNull());
+    expect(lastBody!.target).toBe("stm32h753zi");
+
+    // Modal hint should call out the H7 export.
+    expect(
+      await screen.findByTestId("h7-export-hint"),
+    ).toHaveTextContent(/STM32H753ZI/i);
+  });
 });

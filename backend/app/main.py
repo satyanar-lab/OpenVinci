@@ -164,6 +164,11 @@ class ApplyFixRequest(BaseModel):
 class GenerateRequest(BaseModel):
     project: dict[str, dict[str, Any]] | None = None
     sourceProject: str | None = None
+    # PROMPT C5: lets the UI tell us to package the FULL firmware
+    # export instead of just the *_Cfg files. "host" (or absent) =
+    # today's behaviour. "stm32h753zi" = assemble_h7_project — same
+    # signal a project.json target field gives us for the CLI flow.
+    target: str | None = None
 
 
 def create_app() -> FastAPI:
@@ -499,12 +504,22 @@ def create_app() -> FastAPI:
         """
         proj, source_dir, label = _resolve_generate_inputs(project, body)
 
-        # PROMPT C4: if the project selects target=stm32h753zi (its
-        # project.json says so), the user wants the COMPLETE
-        # firmware project — Makefile + fixed templates + BSW + CMSIS
-        # + generated *_Cfg + glue — not just the loose *_Cfg files.
-        # Route to the assembler in that case.
-        is_h7 = source_dir is not None and project_export.can_h7.is_h7_target(source_dir)
+        # PROMPT C4 + C5: the user wants the COMPLETE firmware project
+        # — Makefile + fixed templates + BSW + CMSIS + generated *_Cfg
+        # + glue — not just the loose *_Cfg files. Two signals say so:
+        #   - The body's explicit target field (UI flow, PROMPT C5).
+        #   - The on-disk project.json's target field (CLI / direct
+        #     /api/generate/zip?project=NAME flow, PROMPT C4).
+        # The body wins because the UI may be editing a project the
+        # caller doesn't have on-disk as h7-loopback.
+        body_target = body.target if body is not None else None
+        is_h7 = (
+            body_target == "stm32h753zi"
+            or (
+                source_dir is not None
+                and project_export.can_h7.is_h7_target(source_dir)
+            )
+        )
         if is_h7:
             payload, label = project_export.write_zip(proj, source_dir=source_dir)
             buf = io.BytesIO(payload)

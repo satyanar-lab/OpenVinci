@@ -13,6 +13,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { generate, generateZip } from "../api";
+import type { Target } from "../api";
 import type { CompileMessage, GenerateResponse, ProjectRaw, Severity } from "../types";
 import { Modal } from "./Modal";
 import { unzipStored, type UnzipEntry } from "../unzipStored";
@@ -22,11 +23,13 @@ type Phase = "running" | "ok" | "errors" | "unavailable" | "failed";
 export function GenerateModal({
   project,
   sourceProject,
+  target,
   onClose,
   onComplete,
 }: {
   project: ProjectRaw;
   sourceProject: string | undefined;
+  target: Target;
   onClose: () => void;
   onComplete?: (status: "ok" | "errors" | "unavailable") => void;
 }) {
@@ -35,7 +38,7 @@ export function GenerateModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    generate(project, sourceProject)
+    generate(project, sourceProject, target)
       .then((r) => {
         setResult(r);
         const status = r.compileResult?.status;
@@ -93,6 +96,15 @@ export function GenerateModal({
         </p>
       )}
 
+      {target === "stm32h753zi" && (
+        <p className="hint" data-testid="h7-export-hint">
+          <strong>Target STM32H753ZI</strong> — Download will package the
+          complete buildable firmware project (Makefile, BSW, CMSIS,
+          generated configs + glue). Run <code>make</code> from the
+          extracted folder with <code>arm-none-eabi-gcc</code>.
+        </p>
+      )}
+
       {error && (
         <pre className="error">{error}</pre>
       )}
@@ -109,6 +121,7 @@ export function GenerateModal({
         <DownloadActions
           project={project}
           sourceProject={sourceProject}
+          target={target}
           result={result}
           phase={phase}
         />
@@ -127,11 +140,13 @@ type SavePhase = "idle" | "downloading" | "saving" | "done" | "error";
 function DownloadActions({
   project,
   sourceProject,
+  target,
   result,
   phase,
 }: {
   project: ProjectRaw;
   sourceProject: string | undefined;
+  target: Target;
   result: GenerateResponse | null;
   phase: Phase;
 }) {
@@ -155,7 +170,11 @@ function DownloadActions({
     setSave("downloading");
     setSaveError(null);
     try {
-      const { blob, filename } = await generateZip(project, sourceProject);
+      const { blob, filename } = await generateZip(
+        project,
+        sourceProject,
+        target,
+      );
       triggerBrowserDownload(blob, filename);
       setSave("done");
     } catch (e) {
@@ -178,7 +197,7 @@ function DownloadActions({
         }) => Promise<DirectoryHandle>;
       };
       const dirHandle = await w.showDirectoryPicker({ mode: "readwrite" });
-      const { blob } = await generateZip(project, sourceProject);
+      const { blob } = await generateZip(project, sourceProject, target);
       const entries = await unzipStored(blob);
       await writeEntriesToDirectory(dirHandle, entries);
       setSavedFolder(dirHandle.name);

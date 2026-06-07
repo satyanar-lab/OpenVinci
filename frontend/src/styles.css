@@ -333,6 +333,38 @@ pre,
   min-width: 200px;
 }
 
+.target-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.target-picker label {
+  font-size: var(--fs-sm);
+  color: var(--fg-dim);
+}
+.target-picker select {
+  min-width: 160px;
+}
+.board-options {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--fs-sm);
+  color: var(--fg-dim);
+  background: var(--bg-elev);
+}
+.board-options .board-opt strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.board-options .board-fd {
+  color: var(--accent);
+}
+
 .toolbar-btn {
   height: 26px;
 }

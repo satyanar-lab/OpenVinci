@@ -103,15 +103,24 @@ export async function importDbcUpload(
   );
 }
 
+/**
+ * Board target the firmware-export endpoints use. "host" (or
+ * undefined) keeps the existing host-simulator behaviour; "stm32h753zi"
+ * tells /api/generate/zip to assemble the complete buildable firmware
+ * project (PROMPT C4).
+ */
+export type Target = "host" | "stm32h753zi";
+
 export async function generate(
   project: ProjectRaw,
   sourceProject?: string,
+  target?: Target,
 ): Promise<GenerateResponse> {
   return jsonOrThrow(
     await fetch("/api/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project, sourceProject }),
+      body: JSON.stringify({ project, sourceProject, target }),
     }),
   );
 }
@@ -126,11 +135,12 @@ export async function generate(
 export async function generateZip(
   project: ProjectRaw,
   sourceProject?: string,
+  target?: Target,
 ): Promise<{ blob: Blob; filename: string }> {
   const response = await fetch("/api/generate/zip", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ project, sourceProject }),
+    body: JSON.stringify({ project, sourceProject, target }),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${await response.text()}`);

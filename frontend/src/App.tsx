@@ -15,6 +15,7 @@ import {
   listProjects,
   validateProject,
 } from "./api";
+import type { Target } from "./api";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { Editor } from "./components/Editor";
 import { GenerateModal } from "./components/GenerateModal";
@@ -57,6 +58,10 @@ export function App() {
   >(null);
   const [theme, setTheme] = useState<Theme>("light");
   const [error, setError] = useState<string | null>(null);
+  // PROMPT C5: which board the user wants to generate against. "host"
+  // keeps the existing JSON-files behaviour; "stm32h753zi" routes
+  // /api/generate/zip to the full-firmware export.
+  const [target, setTarget] = useState<Target>("host");
 
   // Apply theme to <html data-theme> so the CSS variables pick it up.
   // Persisting across sessions would need localStorage — not used here
@@ -166,6 +171,9 @@ export function App() {
         onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
         tree={tree}
         selectedId={selectedId}
+        target={target}
+        onTargetChange={setTarget}
+        project={project}
       />
 
       {error && (
@@ -241,6 +249,7 @@ export function App() {
         <GenerateModal
           project={project}
           sourceProject={sourceProject}
+          target={target}
           onClose={() => setShowGenerate(false)}
           onComplete={(status) => setLastGenStatus(status)}
         />
@@ -269,6 +278,9 @@ function TopBar({
   onToggleTheme,
   tree,
   selectedId,
+  target,
+  onTargetChange,
+  project,
 }: {
   projectName: string | null;
   projects: string[];
@@ -283,7 +295,15 @@ function TopBar({
   onToggleTheme: () => void;
   tree: TreeNode[];
   selectedId: string | null;
+  target: Target;
+  onTargetChange: (t: Target) => void;
+  project: ProjectRaw | null;
 }) {
+  // Pull board-options data from the project's Com config. Only used
+  // when target === "stm32h753zi" — the host path doesn't display
+  // these. baudrate / FD detection comes straight from the model so
+  // edits in the Editor flow through automatically.
+  const boardOpts = describeBoardOptions(project);
   return (
     <header className="topbar">
       <div className="group">
@@ -308,6 +328,38 @@ function TopBar({
             </option>
           ))}
         </select>
+      </div>
+
+      <div className="group target-picker" data-testid="target-picker">
+        <label htmlFor="target-select">target</label>
+        <select
+          id="target-select"
+          value={target}
+          onChange={(e) => onTargetChange(e.target.value as Target)}
+          aria-label="board target"
+        >
+          <option value="host">Host (simulation)</option>
+          <option value="stm32h753zi">STM32H753ZI</option>
+        </select>
+        {target === "stm32h753zi" && boardOpts && (
+          <span
+            className="board-options"
+            data-testid="board-options"
+            title="Bit-timing is computed from these at generate time."
+          >
+            <span className="board-opt">
+              kernel <strong>80 MHz</strong>
+            </span>
+            <span className="board-opt">
+              baud <strong>{boardOpts.baud}</strong>
+            </span>
+            {boardOpts.fd && (
+              <span className="board-opt board-fd">
+                FD <strong>data {boardOpts.dataBaud}</strong>
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       <div className="group">
@@ -361,4 +413,40 @@ function TopBar({
       </div>
     </header>
   );
+}
+
+// --- Board-options summary -------------------------------------------
+
+/**
+ * Pull a kbit/s string and FD-data-rate from the first Com network in
+ * the project. The H7 generator already reads baudrate from
+ * Com.networks[0]; surfacing it here keeps the user oriented when
+ * they switch to the STM32H753ZI target without diving into the Com
+ * editor first. Returns null if the project has no Com config — the
+ * selector still renders, but the badge row stays empty.
+ */
+type BoardOptions = {
+  baud: string;
+  fd: boolean;
+  dataBaud: string | null;
+};
+
+function describeBoardOptions(project: ProjectRaw | null): BoardOptions | null {
+  const com = project?.Com as
+    | { networks?: Array<Record<string, unknown>> }
+    | undefined;
+  const net = com?.networks?.[0];
+  if (!net) return null;
+  const baud = typeof net.baudrate === "number" ? formatBaud(net.baudrate) : "—";
+  const fd = net.network === "CANFD";
+  const dataBaudRaw = net.data_baudrate;
+  const dataBaud =
+    fd && typeof dataBaudRaw === "number" ? formatBaud(dataBaudRaw) : null;
+  return { baud, fd, dataBaud };
+}
+
+function formatBaud(hz: number): string {
+  if (hz >= 1_000_000 && hz % 1_000_000 === 0) return `${hz / 1_000_000} Mb/s`;
+  if (hz >= 1_000 && hz % 1_000 === 0) return `${hz / 1_000} kb/s`;
+  return `${hz} b/s`;
 }
