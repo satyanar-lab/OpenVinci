@@ -44,17 +44,19 @@
 #                              CanIf_Cfg + Can_Cfg + EcuM + Sched +
 #                              App.h + App_Demo.c). Tied to
 #                              `--update-golden`.
-#   8. H7 export build       — assemble the h7-loopback firmware
-#                              export and cross-compile it with
-#                              arm-none-eabi-gcc. Skipped silently
-#                              when the cross-toolchain isn't
-#                              installed (typical for backend-only
-#                              dev boxes). The
-#                              .github/workflows/firmware-export-
-#                              build.yml CI job ALWAYS runs this on
-#                              real CI hardware.
 #
 # Each level reports PASS/FAIL on its own line. Exit code = 0 iff all pass.
+#
+# What's NOT in this script:
+#   - Cross-compiling the H7 firmware export. The
+#     `.github/workflows/firmware-export-build.yml` CI job runs it
+#     end-to-end on every push (export → arm-none-eabi-gcc → assert
+#     build/<project>.bin). Local devs reproduce via that job's
+#     recipe or by running `make` inside an exported folder
+#     themselves. Keeping it OUT of verify.sh enforces the
+#     host-isolation contract (the isolation tests under
+#     backend/tests/ are the regression bumper that catches drift
+#     here).
 
 set -uo pipefail
 
@@ -212,39 +214,6 @@ run_level "L2 end-to-end CanTp segmented (generated stack)" "$LOG_DIR/l2-e2e-can
 # emitted .c).
 run_level "L3 golden snapshot" "$LOG_DIR/l3-golden.log" \
     "$PYTEST" "$ROOT/tests/golden"
-
-# ---- L4 H7 export build ---------------------------------------------
-# Assemble the h7-loopback firmware export via the same CLI
-# /api/generate/zip + the desktop UI both go through, then cross-
-# compile it with arm-none-eabi-gcc. The exported folder is built in
-# isolation (no PATH references back to the repo) — a regression
-# that re-introduces `../../vendor/as` into Makefile.export shows up
-# here as a "file not found" before it reaches a user.
-#
-# Silently skipped when arm-none-eabi-gcc isn't available. The
-# .github/workflows/firmware-export-build.yml CI job installs it
-# every push, so the cross-compile is always exercised in CI even
-# when the local box doesn't have a cross-toolchain.
-if command -v arm-none-eabi-gcc > /dev/null 2>&1; then
-    H7_EXPORT_DIR="$ROOT/build/verify/h7-export"
-    run_level "L4 H7 export cross-compile" "$LOG_DIR/l4-h7-export.log" \
-        bash -c "
-            set -e
-            rm -rf '$H7_EXPORT_DIR'
-            '$VENV/bin/python' -m gen.project_export h7-loopback \
-                --output '$H7_EXPORT_DIR'
-            cd '$H7_EXPORT_DIR'
-            make
-            test -f build/h7-loopback.bin
-        "
-else
-    echo "==> L4 H7 export cross-compile"
-    echo "    SKIP (arm-none-eabi-gcc not installed)"
-    LEVEL_NAMES+=("L4 H7 export cross-compile")
-    LEVEL_RESULTS+=("SKIP")
-    LEVEL_DURATIONS+=("0")
-    LEVEL_LOGS+=("(skipped)")
-fi
 
 # ---- frontend (kept short — vitest is fast) -------------------------
 if [ -n "$NPM" ] && [ -d "$ROOT/frontend/node_modules" ]; then

@@ -1,0 +1,149 @@
+# Cross-build for an OpenVinci-exported STM32H753ZI Nucleo-144
+# firmware project. Self-contained: every source the link needs lives
+# under this directory (bsw/, third_party/, generated/, src/). No
+# references to the upstream OpenVinci repo — once you have this
+# folder, you have everything.
+#
+# Targets:
+#     make            # → build/{project}.{elf,bin,hex}
+#     make flash      # st-flash write build/{project}.bin 0x8000000
+#     make flash-openocd
+#     make clean
+#     make size       # arm-none-eabi-size summary
+#
+# Customising:
+#   - drop in your own App.c (implementing App_Init / App_MainFunction)
+#     and remove generated/App_Demo.c from the link.
+#   - tweak CFLAGS / DEFS if your project needs extra knobs.
+
+PROJECT     := {project}
+
+CROSS       ?= arm-none-eabi-
+CC          := $(CROSS)gcc
+OBJCOPY     := $(CROSS)objcopy
+SIZE        := $(CROSS)size
+
+# Layout
+SRC_DIR     := src
+INC_DIR     := include
+GEN_DIR     := generated
+LINKER_DIR  := linker
+BUILD_DIR   := build
+
+THIRD_PARTY := third_party
+CMSIS_CORE  := $(THIRD_PARTY)/CMSIS_5/CMSIS/Core/Include
+CMSIS_DEV   := $(THIRD_PARTY)/cmsis-device-h7
+DEV_INC     := $(CMSIS_DEV)/Include
+DEV_TPL     := $(CMSIS_DEV)/Source/Templates
+
+STARTUP_S   := $(DEV_TPL)/gcc/startup_stm32h753xx.s
+SYSTEM_C    := $(DEV_TPL)/system_stm32h7xx.c
+LDSCRIPT    := $(LINKER_DIR)/stm32h753xx_flash.ld
+
+# BSW sources, bundled into the export. autoas/as upstream
+# (https://github.com/autoas/as) — preserved verbatim so the export
+# behaves identically to the in-repo build.
+BSW_DIR     := bsw
+
+BSW_C       := \
+    $(BSW_DIR)/communication/Com/Com.c \
+    $(BSW_DIR)/communication/PduR/PduR.c \
+    $(BSW_DIR)/communication/PduR/PduR_Com.c \
+    $(BSW_DIR)/communication/PduR/PduR_CanIf.c \
+    $(BSW_DIR)/communication/CanIf/CanIf.c \
+    $(BSW_DIR)/mcal/Can/Can.c \
+    $(BSW_DIR)/libraries/stdbit/src/std_bit.c \
+    $(BSW_DIR)/libraries/mempool/mempool.c
+
+BSW_INC     := \
+    -I$(BSW_DIR)/include \
+    -I$(BSW_DIR)/mcal/Can \
+    -I$(BSW_DIR)/communication/Com \
+    -I$(BSW_DIR)/communication/CanIf \
+    -I$(BSW_DIR)/communication/PduR \
+    -I$(BSW_DIR)/libraries/stdbit/src \
+    -I$(BSW_DIR)/libraries/mempool
+
+# Generated files split into:
+#   GEN_CFG_C — *_Cfg.c (Com, PduR, CanIf, Can): the matrix.
+#   GLUE_C    — EcuM.c, Sched.c, App_Demo.c: integration glue + demo.
+GLUE_C      := $(GEN_DIR)/EcuM.c $(GEN_DIR)/Sched.c $(GEN_DIR)/App_Demo.c
+GEN_CFG_C   := $(filter-out $(GLUE_C),$(wildcard $(GEN_DIR)/*.c))
+
+ARCH_FLAGS  := -mcpu=cortex-m7 -mthumb \
+               -mfpu=fpv5-d16 -mfloat-abi=hard
+
+DEFS        := -DSTM32H753xx \
+               -DUSE_CAN -DUSE_CANIF -DUSE_PDUR -DUSE_COM
+
+INC_FLAGS   := -I$(CMSIS_CORE) -I$(DEV_INC) \
+               -I$(INC_DIR) -I$(GEN_DIR) \
+               $(BSW_INC)
+
+CFLAGS      := $(ARCH_FLAGS) $(DEFS) -O1 -g3 \
+               -ffunction-sections -fdata-sections \
+               -Wall -Wextra -Wno-unused-parameter \
+               $(INC_FLAGS)
+
+ASFLAGS     := $(ARCH_FLAGS) -x assembler-with-cpp
+
+LDFLAGS     := $(ARCH_FLAGS) -T$(LDSCRIPT) \
+               -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(PROJECT).map \
+               -nostartfiles -specs=nano.specs -lc -lnosys
+
+C_SOURCES   := $(GLUE_C) \
+               $(SRC_DIR)/board.c \
+               $(SRC_DIR)/Can_H7.c \
+               $(SRC_DIR)/system_init.c \
+               $(SYSTEM_C) \
+               $(BSW_C) \
+               $(GEN_CFG_C)
+ASM_SOURCES := $(STARTUP_S)
+
+C_OBJ       := $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+ASM_OBJ     := $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.s=.o)))
+OBJ         := $(C_OBJ) $(ASM_OBJ)
+
+vpath %.c $(sort $(dir $(C_SOURCES)))
+vpath %.s $(sort $(dir $(ASM_SOURCES)))
+
+ELF         := $(BUILD_DIR)/$(PROJECT).elf
+BIN         := $(BUILD_DIR)/$(PROJECT).bin
+HEX         := $(BUILD_DIR)/$(PROJECT).hex
+
+.PHONY: all clean flash flash-openocd size
+
+all: $(ELF) $(BIN) $(HEX)
+	@echo ""
+	@$(SIZE) $(ELF)
+
+$(ELF): $(OBJ)
+	@mkdir -p $(@D)
+	$(CC) $(OBJ) $(LDFLAGS) -o $@
+
+$(BIN): $(ELF)
+	$(OBJCOPY) -O binary $< $@
+
+$(HEX): $(ELF)
+	$(OBJCOPY) -O ihex $< $@
+
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/%.o: %.s
+	@mkdir -p $(@D)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+clean:
+	rm -rf $(BUILD_DIR)
+
+flash: $(BIN)
+	st-flash --reset write $(BIN) 0x8000000
+
+flash-openocd: $(ELF)
+	openocd -f interface/stlink.cfg -f target/stm32h7x.cfg \
+	    -c "program $(ELF) verify reset exit"
+
+size: $(ELF)
+	$(SIZE) $(ELF)

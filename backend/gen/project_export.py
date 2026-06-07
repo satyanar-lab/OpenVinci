@@ -58,8 +58,14 @@ _VENDOR_AS = Path(
     os.environ.get("OPENVINCI_VENDOR_AS")
     or (_REPO_ROOT / "vendor" / "as")
 )
-_HARDWARE_DIR = _REPO_ROOT / "hardware" / "stm32h753zi"
-_TEMPLATES_DIR = _HARDWARE_DIR / "templates"
+# All fixed assets the export ships — Can_H7.c, system_init.c, board,
+# linker, the Makefile template, the trimmed CMSIS subset and the
+# device startup/system files — live next to this module so the
+# backend package + Docker image + desktop bundle have them at hand.
+# The .dockerignore + desktop.spec explicitly exclude hardware/, which
+# is fine: hardware/ is the canonical source these files mirror, with
+# a drift check in backend/tests/test_h7_template_drift.py.
+_TEMPLATE_DIR = Path(__file__).resolve().parent / "h7_template"
 
 # autoas BSW C sources copied into bsw/. The list mirrors the in-repo
 # hardware/stm32h753zi/Makefile's BSW_C — touching this here without
@@ -100,14 +106,16 @@ _CMSIS_DEV_STARTUP_S = (
     "third_party/cmsis-device-h7/Source/Templates/gcc/startup_stm32h753xx.s"
 )
 
-# In-repo locations of the CMSIS submodules. The exported project
-# copies subsets of these — we use the firmware tree's already-checked-
-# out copies as the source of truth.
-_LOCAL_CMSIS_CORE = _HARDWARE_DIR / "third_party" / "CMSIS_5" / "CMSIS" / "Core" / "Include"
-_LOCAL_CMSIS_DEV = _HARDWARE_DIR / "third_party" / "cmsis-device-h7"
+# In-template (= in-package) locations of the trimmed CMSIS subset
+# the export hands to the user. NOT the in-repo submodule; the
+# Docker image and desktop bundle don't ship hardware/.
+_TEMPLATE_CMSIS_CORE = (
+    _TEMPLATE_DIR / "third_party" / "CMSIS_5" / "CMSIS" / "Core" / "Include"
+)
+_TEMPLATE_CMSIS_DEV = _TEMPLATE_DIR / "third_party" / "cmsis-device-h7"
 
 # Fixed template assets copied verbatim into the export. Format:
-#   (source_path_relative_to_HARDWARE_DIR, dest_path_relative_to_export_root)
+#   (source_path_relative_to_TEMPLATE_DIR, dest_path_relative_to_export_root)
 _FIXED_ASSETS: tuple[tuple[str, str], ...] = (
     ("src/Can_H7.c", "src/Can_H7.c"),
     ("src/system_init.c", "src/system_init.c"),
@@ -333,14 +341,14 @@ def assemble_h7_project(
 
     # ---- 4. Fixed template assets (driver, board, linker) ----
     for src_rel, dst_rel in _FIXED_ASSETS:
-        src = _HARDWARE_DIR / src_rel
+        src = _TEMPLATE_DIR / src_rel
         dst = output_dir / dst_rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
         written.append(dst)
 
     # ---- 5. Makefile (template with project name substitution) ----
-    mk_template = (_TEMPLATES_DIR / "Makefile.export").read_text()
+    mk_template = (_TEMPLATE_DIR / "Makefile.export").read_text()
     mk_text = mk_template.replace("{project}", slug)
     mk_path = output_dir / "Makefile"
     mk_path.write_text(mk_text)
@@ -374,23 +382,29 @@ def assemble_h7_project(
         )
 
     # ---- 7. CMSIS (cmsis-device-h7 + CMSIS_5/Core) ----
-    # Subset enough to compile: device headers + system_stm32h7xx.c +
-    # gcc startup + Cortex-M core headers.
+    # Subset enough to compile: the H753 device header set (just
+    # stm32h7xx.h dispatcher + stm32h753xx.h + system_stm32h7xx.h —
+    # the other 21 family device headers sit in #elif branches that
+    # don't fire under -DSTM32H753xx and aren't needed), the
+    # gcc startup .s, system_stm32h7xx.c, and Cortex-M core headers.
+    # These travel with the backend package (backend/gen/h7_template/)
+    # — they're NOT read from hardware/ at runtime, so Docker images
+    # and PyInstaller bundles that exclude hardware/ still work.
     written.extend(
         _copy_tree_filtered(
-            _LOCAL_CMSIS_DEV / "Include",
+            _TEMPLATE_CMSIS_DEV / "Include",
             output_dir / _CMSIS_DEV_INCLUDE,
             suffixes=(".h",),
         )
     )
-    sys_c_src = _LOCAL_CMSIS_DEV / "Source" / "Templates" / "system_stm32h7xx.c"
+    sys_c_src = _TEMPLATE_CMSIS_DEV / "Source" / "Templates" / "system_stm32h7xx.c"
     sys_c_dst = output_dir / _CMSIS_DEV_SYS_C
     sys_c_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(sys_c_src, sys_c_dst)
     written.append(sys_c_dst)
 
     startup_src = (
-        _LOCAL_CMSIS_DEV / "Source" / "Templates" / "gcc" / "startup_stm32h753xx.s"
+        _TEMPLATE_CMSIS_DEV / "Source" / "Templates" / "gcc" / "startup_stm32h753xx.s"
     )
     startup_dst = output_dir / _CMSIS_DEV_STARTUP_S
     startup_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -399,7 +413,7 @@ def assemble_h7_project(
 
     written.extend(
         _copy_tree_filtered(
-            _LOCAL_CMSIS_CORE,
+            _TEMPLATE_CMSIS_CORE,
             output_dir / _CMSIS_CORE_DIR,
             suffixes=(".h",),
         )

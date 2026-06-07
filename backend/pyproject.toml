@@ -45,6 +45,27 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app*", "engine*", "gen*", "importer*"]
 
+# The H7 firmware-export generator (backend/gen/project_export.py)
+# ships a vendored copy of the fixed template assets at
+# backend/gen/h7_template/ — driver / board / linker / Makefile
+# template plus a trimmed CMSIS subset. These are NOT Python; we
+# enumerate them as package_data so `pip install -e backend`, the
+# Docker image, and the PyInstaller desktop bundle all have them at
+# runtime. Per the isolation contract in
+# backend/tests/test_isolation.py, the dev-time canonical source
+# tree they mirror is NOT shipped in any of those install targets.
+[tool.setuptools.package-data]
+gen = [
+    "h7_template/Makefile.export",
+    "h7_template/src/*.c",
+    "h7_template/include/*.h",
+    "h7_template/linker/*.ld",
+    "h7_template/third_party/cmsis-device-h7/Include/*.h",
+    "h7_template/third_party/cmsis-device-h7/Source/Templates/*.c",
+    "h7_template/third_party/cmsis-device-h7/Source/Templates/gcc/*.s",
+    "h7_template/third_party/CMSIS_5/CMSIS/Core/Include/*.h",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

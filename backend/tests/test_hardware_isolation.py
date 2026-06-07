@@ -137,3 +137,88 @@ def test_gitmodules_lists_h753zi_submodules():
         r'\[submodule\s+"hardware/stm32h753zi/third_party/CMSIS_5"\]',
         text,
     ), ".gitmodules missing hardware/stm32h753zi/third_party/CMSIS_5"
+
+
+# --- PROMPT FIX: positive assertions for the h7_template -------------
+#
+# The export-template assets (backend/gen/h7_template/) DO ship in the
+# backend package and the desktop bundle — that's how the H7 export
+# works in the Docker image and the desktop app even though the
+# embedded-firmware tree is excluded. These tests pin the contract so
+# a future "let's drop package_data" PR has to remove the assertion
+# explicitly.
+
+
+def test_pyproject_packages_the_h7_template():
+    """The backend package_data MUST enumerate the H7 template files
+    — without this, `pip install -e backend` skips them and
+    `project_export.assemble_h7_project` raises FileNotFoundError at
+    runtime in the Docker image."""
+    text = _read(REPO_ROOT / "backend" / "pyproject.toml")
+    assert "[tool.setuptools.package-data]" in text, (
+        "backend/pyproject.toml is missing the package-data section "
+        "that ships gen/h7_template/."
+    )
+    for tracked in (
+        "h7_template/Makefile.export",
+        "h7_template/src/*.c",
+        "h7_template/linker/*.ld",
+        "h7_template/third_party/cmsis-device-h7/Include/*.h",
+        "h7_template/third_party/CMSIS_5/CMSIS/Core/Include/*.h",
+    ):
+        assert tracked in text, f"package-data missing {tracked!r}"
+
+
+def test_desktop_spec_bundles_the_h7_template():
+    """The PyInstaller bundle includes gen/h7_template so the
+    desktop H7 export reads from the bundled subset, not the
+    embedded-firmware tree (which the bundle excludes)."""
+    text = _read(REPO_ROOT / "desktop.spec")
+    assert "backend/gen/h7_template" in text, (
+        "desktop.spec must add backend/gen/h7_template → gen/h7_template "
+        "to its datas list."
+    )
+
+
+def test_h7_template_only_ships_h753_device_headers():
+    """The export only needs three device headers (the dispatcher
+    stm32h7xx.h, the H753 device header, and system_stm32h7xx.h).
+    Pulling in all 24 family device headers would bloat the Python
+    package by ~46 MB for code paths the H7 build never compiles."""
+    template_inc = (
+        REPO_ROOT / "backend" / "gen" / "h7_template"
+        / "third_party" / "cmsis-device-h7" / "Include"
+    )
+    if not template_inc.is_dir():
+        pytest.skip(
+            "backend/gen/h7_template not populated in this checkout."
+        )
+    headers = sorted(p.name for p in template_inc.glob("*.h"))
+    assert headers == sorted(
+        ["stm32h7xx.h", "stm32h753xx.h", "system_stm32h7xx.h"]
+    ), (
+        "h7_template's cmsis-device-h7 Include set drifted — the H7 "
+        f"export build needs only three device headers; got {headers}."
+    )
+
+
+def test_dockerfile_does_not_pull_cmsis_5_submodule_into_image():
+    """The bundled trimmed CMSIS subset under gen/h7_template/ is
+    ~3 MB. The full CMSIS_5 submodule (DSP, RTOS2, NN, etc.) is
+    ~150 MB and has no place in the image. The Dockerfile MUST NOT
+    copy or reference the in-repo CMSIS_5 path directly — it gets the
+    small subset for free via backend/gen/h7_template/, which is part
+    of the backend package."""
+    text = _read(REPO_ROOT / "Dockerfile")
+    forbidden = (
+        "CMSIS_5/CMSIS/DSP",
+        "CMSIS_5/CMSIS/NN",
+        "CMSIS_5/CMSIS/RTOS",
+        "third_party/CMSIS_5\n",
+        "third_party/CMSIS_5 ",
+    )
+    for token in forbidden:
+        assert token not in text, (
+            f"Dockerfile references {token!r} — that would pull the "
+            "~150 MB CMSIS_5 submodule into the image."
+        )

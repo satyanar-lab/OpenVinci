@@ -64,6 +64,12 @@ a = Analysis(
         (under("vendor/as/LICENSE"),   "vendor/as"),
         (under("vendor/as/README.md"), "vendor/as"),
         (under("README.md"),        "."),
+        # The H7 firmware-export template (driver / board / linker /
+        # Makefile + a trimmed CMSIS subset). project_export.py reads
+        # from gen/h7_template/ at runtime — bundle it so the desktop
+        # app can produce H7 exports without the embedded-firmware
+        # tree being on disk.
+        (under("backend/gen/h7_template"), "gen/h7_template"),
     ],
     hiddenimports=[
         # Backend modules — the FastAPI app entrypoint and its sibs.
