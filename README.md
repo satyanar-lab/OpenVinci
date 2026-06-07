@@ -14,7 +14,13 @@ What you get:
   project (Com, CanIf, PduR, Can) in one call.
 - **Generate + compile in one step** — emits the upstream
   `*_Cfg.{h,c}` and verifies them against the BSW headers.
-- **A four-level verification report** (`scripts/verify.sh`) that
+- **A ready-to-build STM32H753ZI firmware export** — pick the
+  "STM32H753ZI" board target in the UI (or
+  `python -m gen.project_export h7-loopback`) and Generate hands you
+  a self-contained firmware project that builds with
+  `arm-none-eabi-gcc`. See "STM32H753ZI firmware export" below for
+  the precise scope.
+- **A multi-level verification report** (`scripts/verify.sh`) that
   states exactly what we've proven — and what we haven't.
 
 OpenVinci doesn't replace `autoas/as`. It wraps it. Every JSON file
@@ -315,16 +321,73 @@ docs/
 
 Top-level conventions and per-layer notes live in [`CLAUDE.md`](CLAUDE.md).
 
+## STM32H753ZI firmware export
+
+For the single **STM32H753ZI Nucleo-144** board target, OpenVinci now
+emits a complete buildable firmware project — generating the full
+COM stack (Com / PduR / CanIf, via the upstream `vendor/as`
+generators) **plus** the Can driver config (`backend/gen/can_h7.py`:
+NBTP register, message-RAM layout, Rx filters → Hrh, Tx slots → Hth)
+**plus** the integration glue (`backend/gen/ecu_glue.py`: the EcuM
+startup, the SysTick-driven scheduler, the `App_Init / App_MainFunction`
+seam). All of it assembled into one folder by
+`backend/gen/project_export.py` and downloadable as a zip from the
+UI ("STM32H753ZI" target) or the CLI:
+
+```sh
+python -m gen.project_export h7-loopback --output /tmp/h7-loopback
+cd /tmp/h7-loopback && make           # arm-none-eabi-gcc only
+make flash                            # st-flash; Nucleo board over ST-LINK
+```
+
+What it is **not**:
+
+- **Not a per-chip driver generator.** The FDCAN driver
+  (`hardware/stm32h753zi/src/Can_H7.c`) is **hand-written and
+  reused verbatim** in every export. It reads the generated config
+  table; it's not itself derived from the config. Porting to a
+  second MCU family means hand-porting that one file.
+- **No RTE.** No application-runtime environment, no SWC composition,
+  no port/connector resolution. The app seam is two plain C
+  functions (`App_Init`, `App_MainFunction`) the developer
+  implements directly.
+- **Not an AUTOSAR-licensed MCAL.** The Can driver is original code
+  against the M_CAN register layout; the upstream `vendor/as` BSW
+  is a study project under GPLv3 / a separate commercial license.
+  This export is neither AUTOSAR-classified, AUTOSAR-conformance
+  tested, nor licensed by an automotive tier-1.
+- **Not safety-certified.** No ISO 26262 / ASIL-classification, no
+  MISRA-C audit, no functional-safety claims of any kind.
+
+What's actually verified, end-to-end:
+
+| Claim                                                  | Where it's caught |
+|--------------------------------------------------------|-----|
+| Generated `Can_Cfg` + glue stay byte-stable across regenerations (h7-loopback) | `tests/golden/test_h7_golden.py` (L3) |
+| NBTP register value matches STM32CubeMX for 500 kbit/s @ 80 MHz | `backend/tests/test_can_h7_gen.py` + L3 |
+| Exported project cross-compiles standalone with `arm-none-eabi-gcc` (no repo paths) | `scripts/verify.sh` L4 + `.github/workflows/firmware-export-build.yml` |
+| The COM stack ↔ CanIf ↔ Com round-trip works on a real ECU | **Manual** on-hardware FDCAN internal-loopback (`hardware/stm32h753zi/README.md`) — boots, prints `RX=0xNN` over the VCP |
+
+**Per-project verification is on the user.** A successful CI export
+build proves the *generator* still emits a project that compiles on
+the H7 toolchain. It does **not** prove a *specific user project*
+boots correctly on real silicon. Each exported project must still be
+flashed and exercised against its own target board.
+
 ## How generated files are verified
 
-OpenVinci ships seven verification levels. Each one makes a *specific*
-claim. Together they say: the configs OpenVinci emits are
+OpenVinci ships **nine** verification levels. Each one makes a
+*specific* claim. Together they say: the configs OpenVinci emits are
 **structurally valid, syntactically + semantically valid C against the
-BSW headers, byte-stable across regenerations, transported byte-exact
-by the runtime simulator, and — when linked into a real node — route
-classic Com signals, FD-sized PDUs, and ISO-15765 segmented diagnostic
-SDUs end-to-end through the generated CanIf→PduR→{Com, CanTp→Dcm}
-paths.**
+BSW headers, byte-stable across regenerations (host examples + the
+h7-loopback firmware export), transported byte-exact by the runtime
+simulator, and — when linked into a real node — route classic Com
+signals, FD-sized PDUs, and ISO-15765 segmented diagnostic SDUs
+end-to-end through the generated CanIf→PduR→{Com, CanTp→Dcm} paths.
+The exported H7 firmware project cross-compiles standalone with
+`arm-none-eabi-gcc`, and a manual on-hardware FDCAN internal-loopback
+test proves the same generated pipeline closes the loop on real
+silicon.**
 
 That is precisely what they say. It is **not** what they don't say —
 see the disclaimer below.
@@ -337,7 +400,8 @@ see the disclaimer below.
 | **L2 end-to-end (generated stack)** | `make test-functional` (TestComStackLoopback) | A real node binary is built by gcc-linking our generated `*_Cfg.c` (from `examples/com-minimal`) with the upstream Com / CanIf / PduR / Can MCAL sources plus the simulator Can driver. With that node running: (a) `Com_SendSignal(COM_SID_TxSignal, …)` on the generated config becomes a CAN frame at id `0x100` that the broker routes to a Python listener, and (b) a `0x101` frame the harness injects is decoded by the generated `CanIf → PduR_CanIfRxIndication → PduR_RxIndication → Com_RxIndication` path, and `Com_ReceiveSignal(COM_SID_RxSignal, …)` returns the exact byte the harness sent. The OpenVinci-emitted config wires real data through the upstream stack. |
 | **L2 end-to-end CAN FD (generated stack)** | `make test-functional` (TestCanFdLoopback) | Same chain, against `examples/canfd-minimal`: an FD-marked PDU (`fd: true`, `dlc: 16`) with a 16-byte `UINT8N` signal on each direction. With the FD node running: (a) `Com_SendSignal(COM_SID_TxFdSignal, …)` becomes a wire frame at id `0x200` whose dlc field equals **16** and whose 16 payload bytes equal the bytes the node Com-sent — anything narrower would silently pass the classic check. (b) The harness injects a known 16-byte payload at id `0x201`; the generated `CanIf → PduR_CanIfRxIndication → PduR_RxIndication → Com_RxIndication` path populates the FD Com IPDU, and `Com_ReceiveSignal(COM_SID_RxFdSignal, …)` returns **all 16 bytes** byte-exact. FD-sized PDU routing through the OpenVinci-emitted Com/CanIf/PduR config + upstream BSW is real, not stubbed. |
 | **L2 end-to-end CanTp segmented (generated stack)** | `make test-functional` (TestCanTpLoopback) | ISO-15765 segmented diagnostic transport against `examples/cantp-iso15765`. The node is built from a Com-less project (CanIf + PduR + CanTp + a Dcm upper-layer sink). The Python harness only speaks raw ISO-TP PCI frames at the CanIf RxPdu id `0x7e0`: (a) a 5-byte SDU is sent as a Single Frame and the sink logs `DcmRx[5]=<exact hex>` via `Dcm_TpRxIndication`. (b) A 20-byte SDU is sent as `FF` + (await `FC` from node on `0x7e8` — asserted) + 2× `CF` (SN=1, SN=2); the sink logs `DcmRx[20]=<exact 20 bytes>`. (c) Negative case: a deliberate CF sequence-number gap (SN=1, SN=3) must produce **no** success log — upstream CanTp's sequence guard (`CanTp.c:425-428`) stays enforced. Segmentation / reassembly is **only** in upstream `CanTp.c`; the sink does nothing but memcpy + print. |
-| **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot, for `com-minimal`, `canfd-minimal`, and `cantp-iso15765`. Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. Rebaseline with `pytest tests/golden --update-golden`. |
+| **L3 golden snapshot** | `make test-golden` | The exact byte content of every generated file (modulo the vendor/as timestamp lines we strip) matches a checked-in snapshot, for `com-minimal`, `canfd-minimal`, `cantp-iso15765`, **and** the h7-loopback firmware export (all 14 files in its `generated/` dir: vendor `*_Cfg` + `Can_Cfg` from `backend/gen/can_h7` + `EcuM` / `Sched` / `App` from `backend/gen/ecu_glue`). Any unintended drift in the generator chain, the model serializer, or our staging fails immediately. A pinned assertion also checks that the H7 NBTP register value stays at `0x00090C01` (500 kbit/s @ 80 MHz, 87.5 % sample) so a silent bit-rate change can't sneak in even with byte-equal whitespace. Rebaseline with `pytest tests/golden --update-golden`. |
+| **L4 H7 export cross-compile** | `scripts/verify.sh` (auto-skip when arm-none-eabi-gcc absent) + `.github/workflows/firmware-export-build.yml` | `python -m gen.project_export h7-loopback` assembles the complete firmware project (fixed templates + autoas BSW + CMSIS + generated `*_Cfg` + glue) into a clean directory with **zero paths back to this repo**; then `arm-none-eabi-gcc 13.x` builds it to `build/h7-loopback.bin`. A regression that re-introduces a `../../vendor/as` reference into `Makefile.export` fails the build with a "file not found" error before it reaches a user. **What this does NOT verify**: that the resulting `.bin` actually boots on real silicon. That requires a Nucleo-H753ZI on the bench — see `hardware/stm32h753zi/README.md` for the FDCAN internal-loopback bring-up test that closes the on-hardware loop. |
 
 Run them all:
 
@@ -394,16 +458,25 @@ this carefully:
 - **CAN FD specifically.** L2 FD proves *FD-sized PDU routing* on a
   host simulator (broker + simulator Can driver), not FD bit-rate
   switching (BRS), FD data-phase timing, or arbitration-phase /
-  data-phase sample-point split. Those parameters live in the
-  hand-written `Can_Cfg.c` of the MCAL — which OpenVinci does NOT
-  generate (see `docs/AUTOAS_NOTES.md` §1.2 — there is no upstream
-  `Can` generator) and the host simulator does not model. On real CAN
-  FD hardware the upstream `CanIf.py` generator also strips the
-  `CAN_CANFD_ID_TYPE` (0x40000000) bit from canids (`vendor/as/tools/
-  generator/CanIf.py:115, :134-135, :253-254`); OpenVinci preserves the
-  intent in the `fd: true` flag at the config level but does not yet
-  re-inject the bit at the generator hand-off. See
-  `docs/CANFD_FEASIBILITY.md` §4.
+  data-phase sample-point split. On the H7 export specifically, the
+  generated `Can_Cfg.c` carries the nominal NBTP value but `DBTP=0`
+  (FD off) — the H7 firmware emits Classic-CAN frames only (DLC ≤ 8).
+  On real CAN FD hardware the upstream `CanIf.py` generator also
+  strips the `CAN_CANFD_ID_TYPE` (0x40000000) bit from canids
+  (`vendor/as/tools/generator/CanIf.py:115, :134-135, :253-254`);
+  OpenVinci preserves the intent in the `fd: true` flag at the
+  config level but does not yet re-inject the bit at the generator
+  hand-off. See `docs/CANFD_FEASIBILITY.md` §4.
+- **STM32H753ZI export specifically.** L3 H7 golden + L4 H7 export
+  build prove the *generator chain* still emits byte-stable code and
+  a project that compiles. They do NOT prove the resulting `.bin`
+  boots correctly on *your* board. The on-hardware FDCAN
+  internal-loopback test in `hardware/stm32h753zi/README.md` closes
+  that gap for **our** h7-loopback configuration — but **every user
+  project must still be flashed and tested against its own target**.
+  Also: the FDCAN driver (`Can_H7.c`) is hand-written and reused
+  verbatim; there is no per-MCU driver generator, no RTE, no
+  AUTOSAR-conformance test, no safety classification.
 - The upstream `autoas/as` BSW is itself a study project (see the
   license note above). It is not a tier-1 supplier's
   series-production AUTOSAR stack.
