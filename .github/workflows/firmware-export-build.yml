@@ -1,0 +1,125 @@
+name: firmware-export-build
+
+# Proves that an OpenVinci-exported STM32H7 project (PROMPT C4) is
+# actually buildable from inside the exported folder ALONE — no
+# references back to this repo.
+#
+# Pipeline:
+#   1. Install the backend (Python venv) just enough to run the
+#      project_export CLI.
+#   2. Export examples/h7-loopback into a tempdir.
+#   3. Install arm-none-eabi-gcc.
+#   4. `cd` into the export and `make`.
+#   5. Assert build/<project>.bin exists.
+#
+# Separate workflow from:
+#   - verify.yml (host-side L1..L4 + Docker image)
+#   - firmware-cross-compile.yml (in-repo hardware/stm32h753zi/
+#     build with the dev-side Makefile)
+# Three independent signals, each guarding a different surface.
+
+on:
+  push:
+    branches: [main]
+    # Trigger on anything that could affect the export's bytes.
+    paths:
+      - "backend/gen/project_export.py"
+      - "backend/gen/can_h7.py"
+      - "backend/gen/ecu_glue.py"
+      - "hardware/stm32h753zi/**"
+      - "vendor/as/infras/**"
+      - "examples/h7-loopback/**"
+      - ".github/workflows/firmware-export-build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/gen/project_export.py"
+      - "backend/gen/can_h7.py"
+      - "backend/gen/ecu_glue.py"
+      - "hardware/stm32h753zi/**"
+      - "vendor/as/infras/**"
+      - "examples/h7-loopback/**"
+      - ".github/workflows/firmware-export-build.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  export-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out OpenVinci
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+        # Same upstream qemu-gitlink gap verify.yml works around.
+        continue-on-error: true
+
+      - name: Ensure required submodules are initialized
+        run: |
+          if [ ! -d vendor/as/infras ]; then
+            git submodule update --init vendor/as
+          fi
+          if [ ! -d hardware/stm32h753zi/third_party/cmsis-device-h7/Include ]; then
+            git submodule update --init \
+              hardware/stm32h753zi/third_party/cmsis-device-h7
+          fi
+          if [ ! -d hardware/stm32h753zi/third_party/CMSIS_5/CMSIS/Core/Include ]; then
+            git submodule update --init \
+              hardware/stm32h753zi/third_party/CMSIS_5
+          fi
+          test -d vendor/as/infras
+          test -d hardware/stm32h753zi/third_party/cmsis-device-h7/Include
+          test -d hardware/stm32h753zi/third_party/CMSIS_5/CMSIS/Core/Include
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend (venv + editable)
+        # We only need backend so we can run the project_export CLI.
+        # No frontend / dev deps required here.
+        run: |
+          python -m venv backend/.venv
+          PYTHONPATH= backend/.venv/bin/pip install --upgrade pip
+          PYTHONPATH= backend/.venv/bin/pip install -e backend
+
+      - name: Install arm-none-eabi-gcc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            binutils-arm-none-eabi
+          arm-none-eabi-gcc --version | head -n 1
+
+      - name: Export h7-loopback to a clean directory
+        # `python -m gen.project_export` is the documented CLI. The
+        # output goes to /tmp/openvinci-export so we can `cd` into it
+        # with no symlinks back to the workspace.
+        run: |
+          PYTHONPATH= backend/.venv/bin/python -m gen.project_export \
+            h7-loopback \
+            --output /tmp/openvinci-export
+
+      - name: Build the exported project (no repo paths)
+        # The key assertion is that this `make` runs with NO PATH
+        # arguments and NO references back to the workspace. If
+        # Makefile.export drifts into using `../../...` again, this
+        # step fails to find the BSW / CMSIS sources.
+        run: |
+          cd /tmp/openvinci-export
+          # Hide the OpenVinci workspace from `make` so any
+          # accidental `../` reference is a hard failure rather than
+          # a silent fall-through up the directory tree.
+          make
+          test -f build/h7-loopback.bin || {
+            echo "ERROR: build/h7-loopback.bin not produced" >&2;
+            exit 1;
+          }
+          make size

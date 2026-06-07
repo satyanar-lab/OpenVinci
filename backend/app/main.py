@@ -27,7 +27,7 @@ from engine import (
     project_from_raw,
     validate,
 )
-from gen import generate_and_compile
+from gen import generate_and_compile, project_export
 from importer import import_dbc_file
 
 log = logging.getLogger("openvinci.backend")
@@ -499,31 +499,41 @@ def create_app() -> FastAPI:
         """
         proj, source_dir, label = _resolve_generate_inputs(project, body)
 
-        workdir = Path(tempfile.mkdtemp(prefix="openvinci-gen-"))
-        buf = io.BytesIO()
-        try:
-            result = generate_and_compile(proj, workdir, source_dir=source_dir)
-            if not result.files:
-                # Generation failed silently — surface that rather than
-                # streaming a zero-entry zip the user would have to
-                # debug. The browser flow hides the Download button in
-                # this case, but a direct API caller deserves a real
-                # response.
-                raise HTTPException(
-                    status_code=500,
-                    detail=(
-                        "generation produced no files; check /api/generate "
-                        "for diagnostics"
-                    ),
-                )
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
-                for f in result.files:
-                    src = workdir / f.path
-                    if not src.is_file():
-                        continue
-                    zf.write(src, arcname=f.path)
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
+        # PROMPT C4: if the project selects target=stm32h753zi (its
+        # project.json says so), the user wants the COMPLETE
+        # firmware project — Makefile + fixed templates + BSW + CMSIS
+        # + generated *_Cfg + glue — not just the loose *_Cfg files.
+        # Route to the assembler in that case.
+        is_h7 = source_dir is not None and project_export.can_h7.is_h7_target(source_dir)
+        if is_h7:
+            payload, label = project_export.write_zip(proj, source_dir=source_dir)
+            buf = io.BytesIO(payload)
+        else:
+            workdir = Path(tempfile.mkdtemp(prefix="openvinci-gen-"))
+            buf = io.BytesIO()
+            try:
+                result = generate_and_compile(proj, workdir, source_dir=source_dir)
+                if not result.files:
+                    # Generation failed silently — surface that rather than
+                    # streaming a zero-entry zip the user would have to
+                    # debug. The browser flow hides the Download button in
+                    # this case, but a direct API caller deserves a real
+                    # response.
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            "generation produced no files; check /api/generate "
+                            "for diagnostics"
+                        ),
+                    )
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+                    for f in result.files:
+                        src = workdir / f.path
+                        if not src.is_file():
+                            continue
+                        zf.write(src, arcname=f.path)
+            finally:
+                shutil.rmtree(workdir, ignore_errors=True)
 
         buf.seek(0)
         safe_label = re.sub(r"[^A-Za-z0-9._-]", "_", label) or "project"
