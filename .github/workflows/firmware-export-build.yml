@@ -81,13 +81,17 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install backend (venv + editable)
-        # We only need backend so we can run the project_export CLI.
-        # No frontend / dev deps required here.
+      - name: Install backend (venv + editable + dev extras)
+        # We only need backend to run the project_export CLI, but
+        # engine.validate imports jsonschema at module load — and
+        # jsonschema currently lives under [dev] in backend's
+        # pyproject.toml. Matching the verify.yml install
+        # (`backend[dev]`) is the lowest-risk way to keep this CI
+        # green without re-classifying the dep.
         run: |
           python -m venv backend/.venv
           PYTHONPATH= backend/.venv/bin/pip install --upgrade pip
-          PYTHONPATH= backend/.venv/bin/pip install -e backend
+          PYTHONPATH= backend/.venv/bin/pip install -e "backend[dev]"
 
       - name: Install arm-none-eabi-gcc
         run: |
