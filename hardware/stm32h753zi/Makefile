@@ -97,8 +97,31 @@ BSW_INC     := \
     -I$(BSW_DIR)/libraries/stdbit/src \
     -I$(BSW_DIR)/libraries/mempool
 
-# Generated *_Cfg.c files. tools/regenerate.py drops them here.
-GEN_C       := $(wildcard $(GEN_DIR)/*.c)
+# Generated files. tools/regenerate.py drops everything here:
+#   _Cfg files  — Com / PduR / CanIf (vendor) + Can (backend/gen/can_h7).
+#   glue files  — EcuM / Sched / App_Demo from backend/gen/ecu_glue.
+# Glue files contain a `main()` symbol (EcuM.c) and override SysTick
+# (Sched.c) — they can't coexist with src/main.c. The APP_VARIANT
+# switch below decides which set the link picks up.
+GLUE_C      := $(GEN_DIR)/EcuM.c $(GEN_DIR)/Sched.c $(GEN_DIR)/App_Demo.c
+GEN_CFG_C   := $(filter-out $(GLUE_C),$(wildcard $(GEN_DIR)/*.c))
+
+# APP_VARIANT picks who owns `int main(void)`:
+#   generated (default) — the PROMPT C3 glue runs the show; the only
+#                          dev-owned code is src/board.c (UART) and
+#                          generated App_Demo.c stands in for the app.
+#   manual              — the hand-written src/main.c runs everything
+#                          itself. Same firmware as PROMPT H3; kept
+#                          around as a debugging reference.
+APP_VARIANT ?= generated
+
+ifeq ($(APP_VARIANT),generated)
+APP_C       := $(GLUE_C) $(SRC_DIR)/board.c
+else ifeq ($(APP_VARIANT),manual)
+APP_C       := $(SRC_DIR)/main.c
+else
+$(error APP_VARIANT must be 'generated' or 'manual' (got '$(APP_VARIANT)'))
+endif
 
 # Cortex-M7F (FPU, hard-float ABI to match what cmsis-device-h7's
 # startup is compiled for).
@@ -132,13 +155,13 @@ LDFLAGS     := $(ARCH_FLAGS) -T$(LDSCRIPT) \
                -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(PROJECT).map \
                -nostartfiles -specs=nano.specs -lc -lnosys
 
-# Sources / objects
-C_SOURCES   := $(SRC_DIR)/main.c \
+# Sources / objects. APP_C picks the entrypoint-owning file(s).
+C_SOURCES   := $(APP_C) \
                $(SRC_DIR)/Can_H7.c \
                $(SRC_DIR)/system_init.c \
                $(SYSTEM_C) \
                $(BSW_C) \
-               $(GEN_C)
+               $(GEN_CFG_C)
 ASM_SOURCES := $(STARTUP_S)
 
 # Map each source path to a build-dir object. Use just the basename so

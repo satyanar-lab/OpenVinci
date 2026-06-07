@@ -9,7 +9,7 @@ See docs/AUTOAS_NOTES.md §2 for the upstream generator API and §3 for
 the host/PC build context this layer compiles against.
 """
 
-from . import can_h7
+from . import can_h7, ecu_glue
 from .compile import VENDOR_AS, compile_check, include_dirs_for
 from .generate import GENERATABLE_CLASSES, run_generators
 from .pipeline import generate_and_compile
@@ -29,6 +29,7 @@ __all__ = [
     "GenerateResult",
     "VENDOR_AS",
     "can_h7",
+    "ecu_glue",
     "compile_check",
     "generate_and_compile",
     "include_dirs_for",
