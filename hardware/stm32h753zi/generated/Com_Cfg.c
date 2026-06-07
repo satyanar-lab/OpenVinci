@@ -1,0 +1,193 @@
+/**
+ * SSAS - Simple Smart Automotive Software
+ * Copyright (C) 2021-2026 Parai Wang <parai@foxmail.com>
+ *
+ * Generated at Sat Jun  6 20:29:04 2026
+ */
+/* ================================ [ INCLUDES  ] ============================================== */
+#include "Com_Cfg.h"
+#include "Com.h"
+#include "Com_Priv.h"
+#ifdef USE_PDUR
+#include "PduR_Cfg.h"
+#endif
+/* ================================ [ MACROS    ] ============================================== */
+/* ================================ [ TYPES     ] ============================================== */
+/* ================================ [ DECLARES  ] ============================================== */
+/* ================================ [ DATAS     ] ============================================== */
+static const uint8_t TxSignal_InitialValue = 0;
+static const uint8_t RxSignal_InitialValue = 0;
+
+static uint8_t Com_PduData_TX_MSG[8];
+static uint8_t Com_PduData_RX_MSG[8];
+
+static Com_IPduTxContextType Com_IPduTxContext_TX_MSG;
+static Com_IPduRxContextType Com_IPduRxContext_RX_MSG;
+
+#ifdef COM_USE_SIGNAL_CONFIG
+static const Com_SignalTxConfigType Com_SignalTxConfig_TxSignal = {
+  #ifdef COM_USE_SIGNAL_TX_ERROR_NOTIFICATION
+  NULL, /* ErrorNotification */
+  #endif
+  #ifdef COM_USE_SIGNAL_TX_NOTIFICATION
+  NULL, /* TxNotification */
+  #endif
+  #if !defined(COM_USE_SIGNAL_TX_ERROR_NOTIFICATION) && !defined(COM_USE_SIGNAL_TX_NOTIFICATION)
+  0,
+  #endif
+};
+
+static Com_SignalRxContextType Com_SignalRxContext_RxSignal;
+static const Com_SignalRxConfigType Com_SignalRxConfig_RxSignal = {
+  &Com_SignalRxContext_RxSignal,
+  #ifdef COM_USE_SIGNAL_RX_INVALID_NOTIFICATION
+  NULL, /* InvalidNotification */
+  #endif
+  #ifdef COM_USE_SIGNAL_RX_NOTIFICATION
+  NULL, /* RxNotification */
+  #endif
+  #ifdef COM_USE_SIGNAL_RX_TIMEOUT
+  NULL, /* RxTOut */
+  #endif
+  NULL, /* TimeoutSubstitutionValue */
+  0, /* FirstTimeout */
+  0, /* Timeout */
+  COM_ACTION_NOTIFY, /* DataInvalidAction */
+  COM_ACTION_NONE, /* RxDataTimeoutAction */
+};
+
+#endif /* COM_USE_SIGNAL_CONFIG */
+static const Com_SignalConfigType Com_SignalConfigs[] = {
+  {
+#ifdef USE_SHELL
+    "TxSignal",
+#endif
+    &Com_PduData_TX_MSG[0], /* ptr */
+    &TxSignal_InitialValue, /* initPtr */
+#ifdef COM_USE_SIGNAL_CONFIG
+    NULL, /* rxConfig */
+    &Com_SignalTxConfig_TxSignal, /* txConfig */
+#endif
+    COM_SID_TxSignal, /* HandleId */
+    COM_CAN0_TX_MSG, /* PduId */
+    0, /* BitPosition */
+    8, /* BitSize */
+#ifdef COM_USE_SIGNAL_UPDATE_BIT
+    COM_UPDATE_BIT_NOT_USED, /* UpdateBit */
+#endif
+    COM_UINT8, /* type */
+    COM_LITTLE_ENDIAN, /* Endianness */
+    FALSE,
+  },
+  {
+#ifdef USE_SHELL
+    "RxSignal",
+#endif
+    &Com_PduData_RX_MSG[0], /* ptr */
+    &RxSignal_InitialValue, /* initPtr */
+#ifdef COM_USE_SIGNAL_CONFIG
+    &Com_SignalRxConfig_RxSignal, /* rxConfig */
+    NULL, /* txConfig */
+#endif
+    COM_SID_RxSignal, /* HandleId */
+    COM_CAN0_RX_MSG, /* PduId */
+    0, /* BitPosition */
+    8, /* BitSize */
+#ifdef COM_USE_SIGNAL_UPDATE_BIT
+    COM_UPDATE_BIT_NOT_USED, /* UpdateBit */
+#endif
+    COM_UINT8, /* type */
+    COM_LITTLE_ENDIAN, /* Endianness */
+    FALSE,
+  },
+};
+
+static const Com_SignalConfigType* Com_IPduSignals_TX_MSG[] = {
+  &Com_SignalConfigs[COM_SID_TxSignal],
+};
+
+static const Com_SignalConfigType* Com_IPduSignals_RX_MSG[] = {
+  &Com_SignalConfigs[COM_SID_RxSignal],
+};
+
+static const Com_IPduTxConfigType Com_IPduTxConfig_TX_MSG = {
+  &Com_IPduTxContext_TX_MSG,
+  #ifdef COM_USE_TX_ERROR_NOTIFICATION
+  NULL, /* ErrorNotification */
+  #endif
+  #ifdef COM_USE_TX_NOTIFICATION
+  NULL, /* TxNotification */
+  #endif
+  #ifdef COM_USE_TX_IPDU_CALLOUT
+  NULL, /* TxIpduCallout */
+  #endif
+  COM_CONVERT_MS_TO_MAIN_CYCLES(0u), /* FirstTime */
+  COM_CONVERT_MS_TO_MAIN_CYCLES(1000u), /* CycleTime */
+#ifdef USE_PDUR
+  PDUR_CAN0_TX_MSG,
+#else
+  COM_ECUC_PDUID_OFFSET + COM_CAN0_TX_MSG,
+#endif
+};
+
+static const Com_IPduRxConfigType Com_IPduRxConfig_RX_MSG = {
+  &Com_IPduRxContext_RX_MSG,
+  #ifdef COM_USE_RX_NOTIFICATION
+  NULL, /* RxNotification */
+  #endif
+  #ifdef COM_USE_RX_TIMEOUT
+  NULL, /* RxTOut */
+  #endif
+  #ifdef COM_USE_RX_IPDU_CALLOUT
+  NULL, /* RxIpduCallout */
+  #endif
+  COM_CONVERT_MS_TO_MAIN_CYCLES(0u), /* FirstTimeout */
+  COM_CONVERT_MS_TO_MAIN_CYCLES(0u), /* Timeout */
+};
+
+static const Com_IPduConfigType Com_IPduConfigs[] = {
+  {
+#ifdef USE_SHELL
+    "TX_MSG",
+#endif
+    Com_PduData_TX_MSG, /* ptr */
+    NULL, /* dynLen */
+    Com_IPduSignals_TX_MSG, /* signals */
+    NULL, /* rxConfig */
+    &Com_IPduTxConfig_TX_MSG, /* txConfig */
+    Com_IPduTX_MSG_GroupRefMask,
+    sizeof(Com_PduData_TX_MSG), /* length */
+    ARRAY_SIZE(Com_IPduSignals_TX_MSG), /* numOfSignals */
+  },
+  {
+#ifdef USE_SHELL
+    "RX_MSG",
+#endif
+    Com_PduData_RX_MSG, /* ptr */
+    NULL, /* dynLen */
+    Com_IPduSignals_RX_MSG, /* signals */
+    &Com_IPduRxConfig_RX_MSG, /* rxConfig */
+    NULL, /* txConfig */
+    Com_IPduRX_MSG_GroupRefMask,
+    sizeof(Com_PduData_RX_MSG), /* length */
+    ARRAY_SIZE(Com_IPduSignals_RX_MSG), /* numOfSignals */
+  },
+};
+
+static Com_GlobalContextType Com_GlobalContext;
+const Com_ConfigType Com_Config = {
+  Com_IPduConfigs,
+  Com_SignalConfigs,
+  &Com_GlobalContext,
+  ARRAY_SIZE(Com_IPduConfigs),
+  ARRAY_SIZE(Com_SignalConfigs),
+  1 /* numOfGroups */,
+};
+
+/* ================================ [ LOCALS    ] ============================================== */
+/* ================================ [ FUNCTIONS ] ============================================== */
+#ifdef USE_E2E
+#include "E2E.h"
+#include "E2E_Cfg.h"
+#endif /* USE_E2E */
+

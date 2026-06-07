@@ -15,33 +15,62 @@ The repo's `.dockerignore` explicitly excludes `hardware/`.
 Prove, on real silicon, the same OpenVinci-emitted CanIf → PduR → Com
 path that L2 already proves on the host simulator:
 
-1. **PROMPT H1 (this commit)** — get the arm-none-eabi-gcc cross-build
-   working and prove the toolchain by booting a "hello" firmware that
-   prints over the Nucleo's ST-LINK Virtual COM Port. **No CAN code
-   yet.** This is the toolchain checkpoint.
+1. **PROMPT H1 (previous commit)** — get the arm-none-eabi-gcc
+   cross-build working and prove the toolchain by booting a "hello"
+   firmware that prints over the Nucleo's ST-LINK Virtual COM Port.
+   **No CAN code yet.** This was the toolchain checkpoint.
 
-2. **PROMPT H2 (next)** — drop the generated `*_Cfg.{h,c}` from one of
-   OpenVinci's example projects onto the board, set FDCAN1 in
-   internal-loopback mode, and prove a single
-   `Com_SendSignal → CanIf → FDCAN → CanIf_RxIndication → Com_RxIndication
-   → Com_ReceiveSignal` round-trip — same shape as the L2 host-sim test,
-   but with the BSW driving real silicon.
+2. **PROMPT H2 (this commit)** — drop the generated `*_Cfg.{h,c}` from
+   `examples/com-minimal` onto the board, bring FDCAN1 up in
+   internal-loopback mode, and link the same vendor/as Com / PduR /
+   CanIf / mcal-Can sources the L2 host-sim node already proves. The
+   cross-build links cleanly; real-silicon smoke is the next prompt.
 
-## Current scope (PROMPT H1)
+## Current scope (PROMPT H2)
 
-The firmware in `src/main.c` does only:
+The firmware now boots and runs the full OpenVinci COM stack:
 
-- Boots from cmsis-device-h7's `Reset_Handler` (FLASH @ 0x08000000).
-- Runs `SystemInit()` (default clock — HSI 64 MHz, no PLL).
-- Enables GPIOD + USART3, configures `PD8`/`PD9` as AF7.
-- Loops printing `hello\r\n` at 115200 8N1 over the on-board ST-LINK
-  Virtual COM Port.
+- `src/system_init.c` — brings PLL2Q up at 80 MHz (HSI64 → /8 → ×40 → /4)
+  and routes it to the FDCAN kernel clock via `RCC.D2CCIP1R.FDCANSEL`.
+- `src/main.c` — USART3 heartbeat, then the AUTOSAR init chain
+  `Can_Init → CanIf_Init → PduR_Init → Com_Init`, then a 1 ms pump loop
+  that calls `Com_SendSignal(TxSignal, …)` every ~100 ms and watches
+  `Com_ReceiveSignal(RxSignal, …)` for changes.
+- `src/Can_Cfg.{h,c}` — hand-written single-controller config; vendor
+  `Can.c` reads it via `&Can_Config`.
+- `src/Can_H7.c` — FDCAN1 backend implementing the `CanAc_*` contract
+  from `vendor/as/infras/mcal/Can/Can_Priv.h` plus `Can_Write` and
+  the `Can_MainFunction_Write/Read` pump:
+  - INIT-mode entry/leave, NBTP for 500 kbit/s @ 87.5 % sample.
+  - Message-RAM layout at `SRAMCAN_BASE`: Rx FIFO 0 (3 × 4 words) +
+    one dedicated Tx Buffer (1 × 4 words). 8-byte payload (Classic
+    CAN; FD support follow-up).
+  - Internal loopback: `CCCR.TEST | CCCR.MON | TEST.LBCK`.
+- `generated/` — `Com_Cfg`, `PduR_Cfg`, `CanIf_Cfg` produced by
+  `tools/regenerate.py` from `examples/com-minimal`. Reproducible via
+  `make generate`.
+
+### Critical seam (`hoh` ↔ FDCAN buffer index)
+
+The generated `CanIf_Cfg.c` sets every TxPdu / RxPdu `hoh` field to
+**0**. We honour that everywhere:
+
+| Layer                      | Object         | Value             |
+| -------------------------- | -------------- | ----------------- |
+| Generated CanIf            | `Hth`, `Hrh`   | `0`               |
+| Our `Can_Cfg.c`            | channel 0      | `hwInstanceId 0`  |
+| Our `Can_H7.c` Tx          | `Hth = 0`      | FDCAN1 Tx Buffer 0 |
+| Our `Can_H7.c` Rx          | `Hrh = 0`      | FDCAN1 Rx FIFO 0  |
+
+On Rx we deliver `Mailbox.Hoh = 0` to `CanIf_RxIndication` so the
+generated CanIf does the same id-based dispatch the L2 host-sim test
+already proves.
 
 Output binary size:
 
 ```
    text    data    bss    dec    hex   filename
-   1484       0   1536   3020    bcc   build/stm32h753zi-hello.elf
+   6132      20   1580   7732   1e34   build/openvinci-h7.elf
 ```
 
 ## Prerequisites
@@ -86,13 +115,24 @@ both submodules in `.gitmodules`, so a fresh init grabs only the tip.
 ```sh
 cd hardware/stm32h753zi
 
-make            # → build/stm32h753zi-hello.{elf,bin,hex}
+# Regenerate the config from examples/com-minimal (uses the same
+# backend/gen pipeline the desktop app calls). Outputs land in
+# generated/. The committed files in this directory are bit-for-bit
+# what this command produces.
+make generate
+
+make            # → build/openvinci-h7.{elf,bin,hex}
 make size       # arm-none-eabi-size summary
 
 # Pick one of these to put it on the board:
 make flash              # st-link tools (`st-flash write … 0x8000000`)
 make flash-openocd      # OpenOCD (interface/stlink.cfg + target/stm32h7x.cfg)
 ```
+
+`make generate` needs the backend's Python deps installed
+(`pip install -e backend/` from the repo root, which pulls in `pycrc`
++ `scons` from `backend/pyproject.toml`). The committed `generated/`
+files mean a cross-build alone needs only the C toolchain.
 
 ## Watch the UART
 
@@ -115,21 +155,27 @@ picocom -b 115200 /dev/ttyACM0      # exit: Ctrl-A Ctrl-X
 # any serial monitor at 115200
 ```
 
-You should see:
+You should see (PROMPT H2 boot messages):
 
 ```
-hello
-hello
-hello
-...
+openvinci-h7: boot
+openvinci-h7: stack up — sending TxSignal
 ```
 
-…printing roughly once per second.
+After PROMPT H1's "hello" loop, the H2 firmware just emits two lines
+during init and then runs the pump silently — the next prompt wires
+an `RxSignal changed` print once a second sender lands.
 
 ## Source map
 
 ```
-src/main.c            this firmware — clock + USART3 init + print loop
+src/main.c            boot, USART3 heartbeat, AUTOSAR init + pump
+src/system_init.c     PLL2Q → 80 MHz FDCAN kernel clock
+src/Can_Cfg.c         single-controller config (vendor Can.c reads this)
+src/Can_H7.c          FDCAN1 backend: CanAc_*, Can_Write, pump
+include/Can_Cfg.h     macros + the `hoh` ↔ buffer-index seam, documented
+generated/            *_Cfg.{h,c} produced by `tools/regenerate.py`
+tools/regenerate.py   wrapper around backend/gen/{stage,generate}.py
 linker/
   stm32h753xx_flash.ld our linker script (upstream cmsis-device-h7
                        only ships dual-core H7 gcc linkers)
@@ -139,6 +185,11 @@ third_party/
   CMSIS_5/            ARM CMSIS-Core Cortex-M7 headers (submodule)
 build/                cross-build outputs (gitignored)
 ```
+
+The vendor BSW (`vendor/as/infras/communication/{Com,PduR,CanIf}/*.c`
+and `vendor/as/infras/mcal/Can/Can.c`) is pulled in directly by the
+Makefile — these are the **same sources** the L2 functional tests
+already exercise on the host simulator.
 
 ## What this is NOT
 
